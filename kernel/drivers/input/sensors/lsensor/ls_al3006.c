@@ -32,12 +32,6 @@
 #endif
 #include <linux/sensor-dev.h>
 
-#if 0
-#define SENSOR_DEBUG_TYPE SENSOR_TYPE_LIGHT
-#define DBG(x...) if(sensor->pdata->type == SENSOR_DEBUG_TYPE) printk(x)
-#else
-#define DBG(x...)
-#endif
 
 #define CONFIG_REG        (0x00)
 #define TIM_CTL_REG       (0x01)
@@ -254,7 +248,7 @@ static int sensor_report_value(struct i2c_client *client)
 struct sensor_operate light_al3006_ops = {
 	.name				= "ls_al3006",
 	.type				= SENSOR_TYPE_LIGHT,	//sensor type and it should be correct
-	.id_i2c				= LIGHT_ID_AL3006,	//i2c id number
+	.id_i2c				= LIGHT_ID_AL3006_l,	//i2c id number
 	.read_reg			= PS_ALS_DATA_REG,	//read data
 	.read_len			= 1,			//data length
 	.id_reg				= SENSOR_UNKNOW_DATA,	//read device id from this register
@@ -285,7 +279,6 @@ static int __init light_al3006_init(void)
 	int result = 0;
 	int type = ops->type;
 	result = sensor_register_slave(type, NULL, NULL, light_get_ops);
-	DBG("%s\n",__func__);
 	return result;
 }
 

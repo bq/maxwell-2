@@ -367,7 +367,7 @@ static struct ext_slave_descr ak8975_descr = {
 	.get_config       = ak8975_get_config,
 	.name             = "ak8975",
 	.type             = EXT_SLAVE_TYPE_COMPASS,
-	.id               = COMPASS_ID_AK8975_1,
+	.id               = COMPASS_ID_AK8975,
 	.read_reg         = 0x01,
 	.read_len         = 10,
 	.endian           = EXT_SLAVE_LITTLE_ENDIAN,
@@ -454,7 +454,7 @@ static int ak8975_mod_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id ak8975_mod_id[] = {
-	{ "ak8975", COMPASS_ID_AK8975_1 },
+	{ "ak8975", COMPASS_ID_AK8975 },
 	{}
 };
 

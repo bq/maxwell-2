@@ -33,12 +33,6 @@
 #include <linux/mma8452.h>
 #include <linux/sensor-dev.h>
 
-#if 0
-#define SENSOR_DEBUG_TYPE SENSOR_TYPE_ACCEL
-#define DBG(x...) if(sensor->pdata->type == SENSOR_DEBUG_TYPE) printk(x)
-#else
-#define DBG(x...)
-#endif
 
 
 #define MMA8451_DEVID		0x1a
@@ -256,7 +250,7 @@ static int sensor_report_value(struct i2c_client *client)
 struct sensor_operate gsensor_mma8452_ops = {
 	.name				= "mma8452",
 	.type				= SENSOR_TYPE_ACCEL,			//sensor type and it should be correct
-	.id_i2c				= ACCEL_ID_MMA845X,			//i2c id number
+	.id_i2c				= ACCEL_ID_MMA845X_l,			//i2c id number
 	.read_reg			= MMA8452_REG_X_OUT_MSB,		//read data
 	.read_len			= 6,					//data length
 	.id_reg				= MMA8452_REG_WHO_AM_I,			//read device id from this register
@@ -286,7 +280,6 @@ static int __init gsensor_mma8452_init(void)
 	int result = 0;
 	int type = ops->type;
 	result = sensor_register_slave(type, NULL, NULL, gsensor_get_ops);	
-	DBG("%s\n",__func__);
 	return result;
 }
 

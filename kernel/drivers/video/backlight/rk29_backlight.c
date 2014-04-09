@@ -26,8 +26,22 @@
 #include <linux/earlysuspend.h>
 #include <asm/io.h>
 #include <mach/board.h>
-
+#ifndef CONFIG_PWM_DRIVER_NEW
 #include "rk2818_backlight.h"
+#else
+#include <plat/pwm.h>
+
+#define PWM_DIV              PWM_DIV2
+#if  defined(CONFIG_MACH_RK30_DS1001B)
+#define PWM_APB_PRE_DIV      20000
+#elif defined(CONFIG_LCD_EJ101IA01G)
+#define PWM_APB_PRE_DIV      20000
+#else
+#define PWM_APB_PRE_DIV      1000
+#endif
+#define BL_STEP              255
+#define BL_SYS_MIN 20
+#endif
 
 /*
  * Debug
@@ -38,6 +52,7 @@
 #define DBG(x...)
 #endif
 
+#ifndef CONFIG_PWM_DRIVER_NEW
 #if defined(CONFIG_ARCH_RK30)
 #define write_pwm_reg(id, addr, val)        __raw_writel(val, addr+(RK30_PWM01_BASE+(id>>1)*0x20000)+id*0x10)
 #define read_pwm_reg(id, addr)              __raw_readl(addr+(RK30_PWM01_BASE+(id>>1)*0x20000+id*0x10))
@@ -45,29 +60,48 @@
 #define write_pwm_reg(id, addr, val)        __raw_writel(val, addr+(RK29_PWM_BASE+id*0x10))
 #define read_pwm_reg(id, addr)              __raw_readl(addr+(RK29_PWM_BASE+id*0x10))    
 #endif
+#else
+#define read_pwm_reg(addr)              __raw_readl(pwm_base + addr)
+#endif
+
 #if defined(CONFIG_MALATA_D8005)
-#define KERNEL_BL_PWM_MIN 5
+#define KERNEL_BL_PWM_MIN 12
 #define KERNEL_BL_PWM_MAX 255
 #elif defined(CONFIG_MALATA_D7008)
-#define KERNEL_BL_PWM_MIN 5
+#define KERNEL_BL_PWM_MIN 9
 #define KERNEL_BL_PWM_MAX 190
 #elif defined(CONFIG_MALATA_D7007)
-#define KERNEL_BL_PWM_MIN 5
-#define KERNEL_BL_PWM_MAX 240
+#define KERNEL_BL_PWM_MIN 7
+#define KERNEL_BL_PWM_MAX 255
+#elif defined(CONFIG_MALATA_D7006)
+#define KERNEL_BL_PWM_MIN 7
+#define KERNEL_BL_PWM_MAX 255
 #elif defined(CONFIG_MALATA_C7022)
-#define KERNEL_BL_PWM_MIN 13
+#define KERNEL_BL_PWM_MIN 5
 #define KERNEL_BL_PWM_MAX 177
+#elif defined(CONFIG_MALATA_D9001)
+#define KERNEL_BL_PWM_MIN 8
+#define KERNEL_BL_PWM_MAX 255
+#elif defined(CONFIG_MALATA_C7019A)
+#define KERNEL_BL_PWM_MIN 9
+#define KERNEL_BL_PWM_MAX 255
 #else
 #define KERNEL_BL_PWM_MIN 13
 #define KERNEL_BL_PWM_MAX 255
 #endif
 static struct clk *pwm_clk;
+#ifdef CONFIG_PWM_DRIVER_NEW
+static void __iomem *pwm_base;
+#endif
 static struct backlight_device *rk29_bl;
 static int suspend_flag = 0;
 static u32 sys_bright_save = KERNEL_BL_PWM_MIN;
 static int close_lcd = 0;
 static int brightness_save = 0;
 static int bl_init = 0;
+#ifdef CONFIG_HALL_KEY
+extern int lcd_mode = 0;
+#endif
 
 int convertint(char s[])  
 {  
@@ -167,13 +201,28 @@ static int rk29_bl_update_status(struct backlight_device *bl)
 		k_bl_range = KERNEL_BL_PWM_MAX -KERNEL_BL_PWM_MIN;
 		k_bl = KERNEL_BL_PWM_MIN +  (brightness - BL_SYS_MIN) * k_bl_range / sys_bl_range;
 	}
+#ifdef CONFIG_PWM_DRIVER_NEW
+	div_total = read_pwm_reg(PWM_REG_LRC);
+#else
 	div_total = read_pwm_reg(id, PWM_REG_LRC);
+#endif
 	if (ref) {
 		divh = div_total * k_bl / BL_STEP;
 	} else {
 		divh = div_total * (BL_STEP - k_bl) / BL_STEP;
 	}
+#ifdef CONFIG_PWM_DRIVER_NEW
+	rk_pwm_setup(id, PWM_DIV, divh, div_total);
+#else
 	write_pwm_reg(id, PWM_REG_HRC, divh);
+#endif
+
+#ifdef CONFIG_HALL_KEY
+	if(!brightness)
+		lcd_mode = 0;
+	else
+		lcd_mode = 1;
+#endif
 
 	if(close_lcd == 0)
 		brightness_save = bl->props.brightness;
@@ -187,12 +236,19 @@ static int rk29_bl_get_brightness(struct backlight_device *bl)
 {
 	u32 divh,div_total;
 	struct rk29_bl_info *rk29_bl_info = bl_get_data(bl);
+#ifndef CONFIG_PWM_DRIVER_NEW
 	u32 id = rk29_bl_info->pwm_id;
+#endif
 	u32 ref = rk29_bl_info->bl_ref;
 	u32 k_bl_range,sys_bl_range,k_bl,sys_bl;
 
+#ifdef CONFIG_PWM_DRIVER_NEW
+	div_total = read_pwm_reg(PWM_REG_LRC);
+	divh = read_pwm_reg(PWM_REG_HRC);
+#else
 	div_total = read_pwm_reg(id, PWM_REG_LRC);
 	divh = read_pwm_reg(id, PWM_REG_HRC);
+#endif
 	sys_bl_range = BL_STEP - BL_SYS_MIN;
 	k_bl_range = KERNEL_BL_PWM_MAX -KERNEL_BL_PWM_MIN;
 	if (!div_total)
@@ -235,6 +291,10 @@ static void rk29_bl_suspend(struct early_suspend *h)
 		rk29_bl->props.brightness = 0;
 		rk29_bl_update_status(rk29_bl);
 		rk29_bl->props.brightness = brightness;
+#ifdef CONFIG_HALL_KEY
+		lcd_mode = 0;
+#endif
+
 	}
 
 }
@@ -329,6 +389,10 @@ static int rk29_backlight_probe(struct platform_device *pdev)
 		return -ENODEV;		
 	}
 
+#ifdef CONFIG_PWM_DRIVER_NEW
+	pwm_base = rk_pwm_get_base(id);
+	pwm_clk = rk_pwm_get_clk(id);
+#else
 #if defined(CONFIG_ARCH_RK29)
 	pwm_clk = clk_get(NULL, "pwm");
 #elif defined(CONFIG_ARCH_RK30)
@@ -337,6 +401,8 @@ static int rk29_backlight_probe(struct platform_device *pdev)
 	else if (id == 2 || id == 3)
 		pwm_clk = clk_get(NULL, "pwm23");
 #endif
+#endif
+
 	if (IS_ERR(pwm_clk)) {
 		printk(KERN_ERR "failed to get pwm clock source\n");
 		return -ENODEV;
@@ -354,18 +420,22 @@ static int rk29_backlight_probe(struct platform_device *pdev)
 	}
 
 	clk_enable(pwm_clk);
+#ifdef CONFIG_PWM_DRIVER_NEW
+	rk_pwm_setup(id, PWM_DIV, divh, div_total);
+#else
 	write_pwm_reg(id, PWM_REG_CTRL, PWM_DIV|PWM_RESET);
 	write_pwm_reg(id, PWM_REG_LRC, div_total);
 	write_pwm_reg(id, PWM_REG_HRC, divh);
 	write_pwm_reg(id, PWM_REG_CNTR, 0x0);
 	write_pwm_reg(id, PWM_REG_CTRL, PWM_DIV|PWM_ENABLE|PWM_TIME_EN);
+#endif
 
 	rk29_bl->props.power = FB_BLANK_UNBLANK;
 	rk29_bl->props.fb_blank = FB_BLANK_UNBLANK;
 	rk29_bl->props.brightness = BL_STEP / 2;
 	rk29_bl->props.state = BL_CORE_DRIVER1;		
 
-	schedule_delayed_work(&rk29_backlight_work, msecs_to_jiffies(0));
+	schedule_delayed_work(&rk29_backlight_work, msecs_to_jiffies(100));
 	ret = device_create_file(&pdev->dev,&dev_attr_rk29backlight);
 	if(ret)
 	{

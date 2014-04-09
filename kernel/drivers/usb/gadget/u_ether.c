@@ -31,6 +31,7 @@
 
 #include "u_ether.h"
 
+static gfp_t g_gfp_flags;
 
 /*
  * This component encapsulates the Ethernet link glue needed to provide
@@ -84,6 +85,10 @@ struct eth_dev {
 
 	bool			zlp;
 	u8			host_mac[ETH_ALEN];
+#define MAX_USB_TX_BUF_SIZE    2048
+	u8 *usb_tx_buf;
+	int usb_tx_buf_flag;
+	wait_queue_head_t usb_tx_buf_wq;
 };
 
 /*-------------------------------------------------------------------------*/
@@ -253,7 +258,7 @@ rx_submit(struct eth_dev *dev, struct usb_request *req, gfp_t gfp_flags)
 	 * but on at least one, checksumming fails otherwise.  Note:
 	 * RNDIS headers involve variable numbers of LE32 values.
 	 */
-	skb_reserve(skb, NET_IP_ALIGN);
+	//skb_reserve(skb, NET_IP_ALIGN);
 
 	req->buf = skb->data;
 	req->length = size;
@@ -479,6 +484,9 @@ static void tx_complete(struct usb_ep *ep, struct usb_request *req)
 	}
 	dev->net->stats.tx_packets++;
 
+	dev->usb_tx_buf_flag = 0;
+	//wake_up(&dev->usb_tx_buf_wq);
+
 	spin_lock(&dev->req_lock);
 	list_add(&req->list, &dev->tx_reqs);
 	spin_unlock(&dev->req_lock);
@@ -577,6 +585,21 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 
 		length = skb->len;
 	}
+	
+	// for tx fixup
+	{
+		struct sk_buff *tx_skb;
+		if ((unsigned long)skb->data % 4) {
+			tx_skb = alloc_skb(skb->len + NET_IP_ALIGN, g_gfp_flags);
+			if (tx_skb)
+				memcpy(skb_put(tx_skb, skb->len), skb->data, skb->len);
+			dev_kfree_skb_any(skb);
+			skb = tx_skb;
+		}
+		length = skb->len;
+	}	
+	// for tx fixup
+	
 	req->buf = skb->data;
 	req->context = skb;
 	req->complete = tx_complete;
@@ -603,6 +626,22 @@ static netdev_tx_t eth_start_xmit(struct sk_buff *skb,
 		req->no_interrupt = (dev->gadget->speed == USB_SPEED_HIGH)
 			? ((atomic_read(&dev->tx_qlen) % qmult) != 0)
 			: 0;
+
+	if ((unsigned long)(req->buf) & 0x03) {
+		req->buf = dev->usb_tx_buf;
+		if (!req->buf) {
+			printk("%s: usb_tx_buf = NULL.\n", __FUNCTION__);
+			goto drop;
+		}
+		if(req->length > MAX_USB_TX_BUF_SIZE) {
+			printk("%s: usb_tx_buf size not enough: length = %d.\n", __FUNCTION__, req->length);
+			goto drop;
+		}
+		//wait_event_interruptible(dev->usb_tx_buf_wq, dev->usb_tx_buf_flag == 0);
+		dev->usb_tx_buf_flag = 1;
+		memcpy(req->buf, skb->data, req->length);
+	}
+
 
 	retval = usb_ep_queue(in, req, GFP_ATOMIC);
 	switch (retval) {
@@ -632,6 +671,8 @@ drop:
 static void eth_start(struct eth_dev *dev, gfp_t gfp_flags)
 {
 	DBG(dev, "%s\n", __func__);
+	
+	g_gfp_flags = gfp_flags;
 
 	/* fill the rx queue */
 	rx_fill(dev, gfp_flags);
@@ -802,6 +843,7 @@ int gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 	INIT_WORK(&dev->work, eth_work);
 	INIT_LIST_HEAD(&dev->tx_reqs);
 	INIT_LIST_HEAD(&dev->rx_reqs);
+	//init_waitqueue_head(&dev->usb_tx_buf_wq);
 
 	skb_queue_head_init(&dev->rx_frames);
 
@@ -823,12 +865,6 @@ int gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 
 	SET_ETHTOOL_OPS(net, &ops);
 
-	/* two kinds of host-initiated state changes:
-	 *  - iff DATA transfer is active, carrier is "on"
-	 *  - tx queueing enabled if open *and* carrier is "on"
-	 */
-	netif_carrier_off(net);
-
 	dev->gadget = g;
 	SET_NETDEV_DEV(net, &g->dev);
 	SET_NETDEV_DEVTYPE(net, &gadget_type);
@@ -841,7 +877,19 @@ int gether_setup_name(struct usb_gadget *g, u8 ethaddr[ETH_ALEN],
 		INFO(dev, "MAC %pM\n", net->dev_addr);
 		INFO(dev, "HOST MAC %pM\n", dev->host_mac);
 
+		dev->usb_tx_buf_flag = 0;
+		dev->usb_tx_buf = kzalloc(MAX_USB_TX_BUF_SIZE, GFP_ATOMIC);
+		if (dev->usb_tx_buf != NULL)
+			printk("%s: kzalloc dev->usb_tx_buf = %p.\n", __FUNCTION__, dev->usb_tx_buf);
+		else
+			printk("%s: kzalloc failed.\n", __FUNCTION__);
 		the_dev = dev;
+
+		/* two kinds of host-initiated state changes:
+		 *  - iff DATA transfer is active, carrier is "on"
+		 *  - tx queueing enabled if open *and* carrier is "on"
+		 */
+		netif_carrier_off(net);
 	}
 
 	return status;
@@ -861,6 +909,11 @@ void gether_cleanup(void)
 	unregister_netdev(the_dev->net);
 	flush_work_sync(&the_dev->work);
 	free_netdev(the_dev->net);
+	if(the_dev->usb_tx_buf) {
+		printk("%s: kzfree usb_tx_buf = %p.\n", __FUNCTION__, the_dev->usb_tx_buf);
+		kzfree(the_dev->usb_tx_buf);
+		the_dev->usb_tx_buf = NULL;
+	}
 
 	the_dev = NULL;
 }

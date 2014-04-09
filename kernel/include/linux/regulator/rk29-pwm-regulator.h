@@ -17,6 +17,9 @@
 #define __LINUX_REGULATOR_PWM_H
 
 #include <linux/regulator/machine.h>
+#ifdef CONFIG_PWM_DRIVER_NEW
+#include <plat/pwm.h>
+#endif
 
 
 #define PWM_REG_CNTR         	0x00
@@ -61,7 +64,7 @@ struct pwm_platform_data {
 	int	coefficient;
 	int	min_uV;
 	int	max_uV;
-	int	*pwm_voltage_map;
+	const int	*pwm_voltage_map;
 	struct regulator_init_data *init_data;
 };
 

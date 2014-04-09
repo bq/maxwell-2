@@ -36,6 +36,9 @@ REVISION 0.01
 #include <mach/iomux.h>
 #include <linux/gpio.h>
 #include <mach/board.h>
+#ifdef CONFIG_PWM_DRIVER_NEW
+#include <plat/pwm.h>
+#endif
 
 
 #if 0
@@ -44,7 +47,21 @@ REVISION 0.01
 #define DBG(x...)
 #endif
 
-
+#ifdef CONFIG_PWM_DRIVER_NEW
+struct rk_pwm_dcdc {
+	char name[16];
+	struct regulator_desc desc;
+	int pwm_id;
+	struct clk *pwm_clk;
+	const void __iomem *pwm_base;
+	u32 suspend_hrc;
+	u32 suspend_lrc;
+	u32 backup_hrc;
+	u32 backup_lrc;
+	struct regulator_dev *regulator;
+	struct pwm_platform_data *pdata;
+};
+#else
 #define	PWM_VCORE_120		40
 #define PWM_VCORE_125		32
 #define	PWM_VCORE_130		21
@@ -60,7 +77,6 @@ struct rk_pwm_dcdc {
 	struct pwm_platform_data *pdata;
 };
 
-
 #if defined(CONFIG_ARCH_RK30)
 #define pwm_write_reg(id, addr, val)        __raw_writel(val, addr+(RK30_PWM01_BASE+(id>>1)*0x20000)+id*0x10)
 #define pwm_read_reg(id, addr)              __raw_readl(addr+(RK30_PWM01_BASE+(id>>1)*0x20000+id*0x10))
@@ -68,14 +84,71 @@ struct rk_pwm_dcdc {
 #define pwm_write_reg(id, addr, val)        __raw_writel(val, addr+(RK29_PWM_BASE+id*0x10))
 #define pwm_read_reg(id, addr)              __raw_readl(addr+(RK29_PWM_BASE+id*0x10))    
 #endif
+#endif
 
 const static int pwm_voltage_map[] = {
 	1000000, 1025000, 1050000, 1075000, 1100000, 1125000, 1150000, 1175000, 1200000, 1225000, 1250000, 1275000, 1300000, 1325000, 1350000, 1375000, 1400000
 };
 
+#ifndef CONFIG_PWM_DRIVER_NEW
 static struct clk *pwm_clk[2];
+#endif
 static struct rk_pwm_dcdc *g_dcdc;
 
+#ifdef CONFIG_PWM_DRIVER_NEW
+static int pwm_set_rate(struct pwm_platform_data *pdata,int nHz,u32 rate)
+{
+	u32 lrc, hrc;
+	int id = pdata->pwm_id;
+	unsigned long clkrate;
+
+	clkrate = clk_get_rate(g_dcdc->pwm_clk);
+
+	DBG("%s:id=%d,rate=%d,clkrate=%d\n",__func__,id,rate,clkrate);
+
+	if(rate == 0)
+	{
+		// iomux pwm to gpio
+		rk29_mux_api_set(pdata->pwm_iomux_name, pdata->pwm_iomux_gpio);
+		//disable pull up or down
+		gpio_pull_updown(pdata->pwm_gpio,PullDisable);
+		// set gpio to low level
+		gpio_direction_output(pdata->pwm_gpio,GPIO_LOW);
+	}
+	else if (rate < 100)
+	{
+		lrc = clkrate / nHz;
+		lrc = lrc >> (1+(PWM_DIV>>9));
+		lrc = lrc ? lrc : 1;
+		hrc = lrc * rate / 100;
+		hrc = hrc ? hrc : 1;
+
+		// iomux pwm
+		rk29_mux_api_set(pdata->pwm_iomux_name, pdata->pwm_iomux_pwm);
+
+		rk_pwm_setup(id, PWM_DIV, hrc, lrc);
+	}
+	else if (rate == 100)
+	{
+		// iomux pwm to gpio
+		rk29_mux_api_set(pdata->pwm_iomux_name, pdata->pwm_iomux_gpio);
+		//disable pull up or down
+		gpio_pull_updown(pdata->pwm_gpio,PullDisable);
+		// set gpio to low level
+		gpio_direction_output(pdata->pwm_gpio,GPIO_HIGH);
+
+	}
+	else
+	{
+		printk("%s:rate error\n",__func__);
+		return -1;
+	}
+
+	usleep_range(10*1000, 10*1000);
+
+	return (0);
+}
+#else
 static int pwm_set_rate(struct pwm_platform_data *pdata,int nHz,u32 rate)
 {
 	u32 divh,divTotal;
@@ -140,6 +213,7 @@ static int pwm_set_rate(struct pwm_platform_data *pdata,int nHz,u32 rate)
 
 	return (0);
 }
+#endif
 
 static int pwm_regulator_list_voltage(struct regulator_dev *dev,unsigned int index)
 {
@@ -179,12 +253,17 @@ static int pwm_regulator_get_voltage(struct regulator_dev *dev)
 	return (dcdc->pdata->pwm_voltage);
 }
 
+#ifdef CONFIG_PWM_DRIVER_NEW
+static int pwm_regulator_set_voltage(struct regulator_dev *dev,
+		int min_uV, int max_uV, unsigned *selector)
+#else
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38))
 static int pwm_regulator_set_voltage(struct regulator_dev *dev,
 		int min_uV, int max_uV, unsigned *selector)
 #else
 static int pwm_regulator_set_voltage(struct regulator_dev *dev,
 		int min_uV, int max_uV)
+#endif
 #endif
 {	   
 	struct rk_pwm_dcdc *dcdc = rdev_get_drvdata(dev);
@@ -222,8 +301,12 @@ static int pwm_regulator_set_voltage(struct regulator_dev *dev,
 
 	}
 
+#ifdef CONFIG_PWM_DRIVER_NEW
+	*selector = i;
+#else
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38))
 	*selector = i;
+#endif
 #endif
 
 	DBG("%s:ok,vol=%d,pwm_value=%d\n",__FUNCTION__,vol,pwm_value);
@@ -241,11 +324,13 @@ static struct regulator_ops pwm_voltage_ops = {
 	.is_enabled	= pwm_regulator_is_enabled,
 };
 
+#ifndef CONFIG_PWM_DRIVER_NEW
 static struct regulator_desc pwm_regulator= {
 	.name = "pwm-regulator",
 	.ops = &pwm_voltage_ops,
 	.type = REGULATOR_VOLTAGE,
 };
+#endif
 
 static int __devinit pwm_regulator_probe(struct platform_device *pdev)
 {
@@ -307,7 +392,34 @@ static int __devinit pwm_regulator_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev,"failed to request pwm gpio\n");
 		goto err_gpio;
 	}
-	
+
+#ifdef CONFIG_PWM_DRIVER_NEW
+	dcdc->pwm_clk = rk_pwm_get_clk(pwm_id);
+	dcdc->pwm_base = rk_pwm_get_base(pwm_id);
+	if (IS_ERR(dcdc->pwm_clk)) {
+		printk("pwm_clk get error %p\n", dcdc->pwm_clk);
+		return -EINVAL;
+	}
+	clk_enable(dcdc->pwm_clk);
+
+	dcdc->suspend_lrc = 0x12;
+	switch (pdata->suspend_voltage)
+	{
+		case 1000000:
+		default:
+			dcdc->suspend_hrc = 0x10;
+		break;
+		case 1050000:
+			dcdc->suspend_hrc = 0x0e;
+			break;
+		case 1100000:
+			dcdc->suspend_hrc = 0x0c;
+			break;
+		case 1150000:
+			dcdc->suspend_hrc = 0x0a;
+			break;
+	}
+#else
 #if defined(CONFIG_ARCH_RK29)
 		pwm_clk[0] = clk_get(NULL, "pwm");
 #elif defined(CONFIG_ARCH_RK30)
@@ -322,7 +434,7 @@ static int __devinit pwm_regulator_probe(struct platform_device *pdev)
 			clk_enable(pwm_clk[1]);
 		}
 #endif
-	
+#endif
 	g_dcdc	= dcdc;
 	platform_set_drvdata(pdev, dcdc);	
 	printk("pwm_regulator.%d: driver initialized\n",id);
@@ -347,6 +459,27 @@ err:
 
 }
 
+#ifdef CONFIG_PWM_DRIVER_NEW
+void pwm_suspend_voltage(void)
+{
+	struct rk_pwm_dcdc *dcdc = g_dcdc;
+
+	if(!dcdc)
+		return;
+
+	dcdc->backup_hrc = readl_relaxed(dcdc->pwm_base + PWM_REG_HRC);
+	dcdc->backup_lrc = readl_relaxed(dcdc->pwm_base + PWM_REG_LRC);
+
+	__rk_pwm_setup(dcdc->pwm_base, PWM_DIV, dcdc->suspend_hrc, dcdc->suspend_lrc);
+}
+
+void pwm_resume_voltage(void)
+{
+	struct rk_pwm_dcdc *dcdc = g_dcdc;
+
+	__rk_pwm_setup(dcdc->pwm_base, PWM_DIV, dcdc->backup_hrc, dcdc->backup_lrc);
+}
+#else
 static int  __sramdata g_PWM_REG_LRC = 0;
 static int  __sramdata g_PWM_REG_HRC = 0;
 void pwm_suspend_voltage(void)
@@ -354,7 +487,7 @@ void pwm_suspend_voltage(void)
 	struct rk_pwm_dcdc *dcdc = g_dcdc;
 	int suspend_voltage = 0;
 	int pwm_id = 0;
-	
+
 	if(!dcdc)
 		return;
 	pwm_id = dcdc->pdata->pwm_id;
@@ -427,6 +560,7 @@ static int pwm_regulator_resume(struct platform_device *pdev)
 	DBG("%s,pwm_id=%d\n",__func__,pdata->pwm_id);
 	return 0;
 }
+#endif
 
 static int __devexit pwm_regulator_remove(struct platform_device *pdev)
 {
@@ -443,8 +577,10 @@ static struct platform_driver pwm_regulator_driver = {
 	.driver = {
 		.name = "pwm-voltage-regulator",
 	},
+#ifndef CONFIG_PWM_DRIVER_NEW
 	.suspend = pwm_regulator_suspend,
 	.resume = pwm_regulator_resume,
+#endif
 	.remove = __devexit_p(pwm_regulator_remove),
 };
 

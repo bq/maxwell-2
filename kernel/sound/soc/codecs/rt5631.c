@@ -42,13 +42,16 @@
 #define DBG(x...)
 #endif
 #define RT5631_VERSION "0.01 alsa 1.0.24"
-
+#if defined(CONFIG_MALATA_C1016)
+#define RT5631_ALC_DAC_FUNC_ENA 1	//ALC functio for DAC
+#else
 #define RT5631_ALC_DAC_FUNC_ENA 0	//ALC functio for DAC
+#endif
 #define RT5631_ALC_ADC_FUNC_ENA 0	//ALC function for ADC
 #define RT5631_SPK_TIMER	1	//if enable this, MUST enable RT5631_EQ_FUNC_ENA first!
 #if defined(CONFIG_FOR_CE)
 #define RT5631_HP_RECORD_TIMER	0	//if enable this, MUST enable RT5631_EQ_FUNC_ENA first!
-#elif defined(CONFIG_MALATA_C7022) || defined(CONFIG_MALATA_C1016) || defined(CONFIG_MALATA_D7007) || defined(CONFIG_MALATA_D8005)\
+#elif defined(CONFIG_MALATA_C7022) || defined(CONFIG_MALATA_D7007) || defined(CONFIG_MALATA_D8005)\
 	|| defined(CONFIG_MALATA_D7006) || defined(CONFIG_MALATA_D7008)
 #define RT5631_HP_RECORD_TIMER	1	//if enable this, MUST enable RT5631_EQ_FUNC_ENA first!
 #else
@@ -185,22 +188,30 @@ struct rt5631_init_reg {
 #endif
 #else
 #ifndef DEF_VOL
-#define DEF_VOL					0xc6//0xd4 -30dB 0xc0 0dB
+#if defined(CONFIG_MALATA_D9001)
+#define DEF_VOL					0xc3//0xd4 -30dB 0xc0 0dB
+#elif defined(CONFIG_MALATA_C1016)
+#define DEF_VOL					0xc5//0xd4 -30dB 0xc0 0dB
+#else
+#define DEF_VOL					0xc5//0xd4 -30dB 0xc0 0dB
+#endif
 #endif
 #endif
 #ifndef DEF_VOL_SPK
 #ifdef CONFIG_MALATA_C7019A
-#define DEF_VOL_SPK				0xcb
+#define DEF_VOL_SPK				0xc7
+#elif defined(CONFIG_MALATA_D9001)
+#define DEF_VOL_SPK				0xc8
 #elif defined(CONFIG_MALATA_C7011)
 #define DEF_VOL_SPK				0xcc
 #elif defined(CONFIG_MALATA_D7006)  ||defined(CONFIG_MALATA_D7007)
-#define DEF_VOL_SPK				0xcb
+#define DEF_VOL_SPK				0xcd
 #elif defined(CONFIG_MALATA_D8005)
-#define DEF_VOL_SPK				0xcb
+#define DEF_VOL_SPK				0xcd
 #elif defined(CONFIG_MALATA_D7008)
 #define DEF_VOL_SPK				0xcb
 #else
-#define DEF_VOL_SPK				0xc8
+#define DEF_VOL_SPK				0xca
 #endif
 #endif
 
@@ -225,11 +236,21 @@ static struct rt5631_init_reg init_list[] = {
 	{RT5631_HP_OUT_VOL		, (DEF_VOL<<8) | DEF_VOL},//Headphone channel volume select OUTMIXER,0DB by default
 	{RT5631_MONO_AXO_1_2_VOL	, 0xE0c0},//AXO1/AXO2 channel volume select OUTMIXER,0DB by default
 	//{RT5631_STEREO_DAC_VOL_1	, 0x004C},
-	{RT5631_STEREO_DAC_VOL_2	, 0x0101},
+#if defined(CONFIG_MALATA_C7011) || defined(CONFIG_MALATA_D8005)
+	{RT5631_STEREO_DAC_VOL_2	, 0x0303},
+#elif defined(CONFIG_MALATA_D7006) || defined(CONFIG_MALATA_D7007)
+	{RT5631_STEREO_DAC_VOL_2	, 0x0202},
+#elif defined(CONFIG_MALATA_C1016)
+	{RT5631_STEREO_DAC_VOL_2	, 0x0808},
+#else
+	{RT5631_STEREO_DAC_VOL_2	, 0x0000},
+#endif
 	{RT5631_ADC_REC_MIXER		, 0xb0f0},//Record Mixer source from Mic1 by default
 	{RT5631_ADC_CTRL_1		, 0x8086},//STEREO ADC CONTROL 1
-#ifdef CONFIG_MALATA_C7011
-	{RT5631_MIC_CTRL_2		, 0x3300},//Mic1/Mic2 boost 40DB by default
+#if defined(CONFIG_MALATA_C7011)
+	{RT5631_MIC_CTRL_2		, 0x3300},//Mic1/Mic2 boost 30DB by default
+#elif defined(CONFIG_MALATA_D9001)
+	{RT5631_MIC_CTRL_2		, 0x2200},//Mic1/Mic2 boost 25DB by default
 #else
 	{RT5631_MIC_CTRL_2		, 0x4400},//Mic1/Mic2 boost 35DB by default
 #endif
@@ -263,7 +284,13 @@ static struct rt5631_init_reg init_list[] = {
 #else
 	{RT5631_SPK_MONO_OUT_CTRL	, 0x6c00},//Speaker volume-->SPOMixer(L-->L,R-->R)
 #endif
+#if defined(CONFIG_MALATA_D7006)  ||defined(CONFIG_MALATA_D7007) || defined(CONFIG_MALATA_D8005) || defined(CONFIG_MALATA_D7008)
+	{RT5631_GEN_PUR_CTRL_REG	, 0x4e00},//Speaker AMP ratio gain is 1.09x
+#elif defined(CONFIG_MALATA_D1016)
+	{RT5631_GEN_PUR_CTRL_REG	, 0x6e00},//Speaker AMP ratio gain is 1.99x
+#else
 	{RT5631_GEN_PUR_CTRL_REG	, 0x4e00},//Speaker AMP ratio gain is 1.27x
+#endif
 //#if defined(CONFIG_ADJUST_VOL_BY_CODEC)
 	{RT5631_SPK_MONO_HP_OUT_CTRL	, 0x0000},//HP from outputmixer,speaker out from SpeakerOut Mixer	
 //#else
@@ -518,7 +545,7 @@ static void spk_work_handler(struct work_struct *work)
 		rt5631_write_index_mask(codec,0x11,0x0000,0x0007);	//0db
 		rt5631_write_index(codec,0x12,0x0003);			//0db
 		rt5631_update_eqmode(codec, SPK_FR);		// SPK is in use, enable EQ mode of SPK_FR.
-		msleep(500);
+		msleep(1300);
 		rt5631_write_mask(codec,0x02,0x0000,0x8080);
 		rt5631_write_mask(codec,0x04,0x8080,0x8080);
 	}else if(!is_spk && (last_is_spk != is_spk)){
@@ -793,8 +820,8 @@ static void rt5631_alc_enable(struct snd_soc_codec *codec,unsigned int EnableALC
 		rt5631_write_index(codec, 0x21,0x5000);
 		rt5631_write_index(codec, 0x22,0xa480);
 		rt5631_write_index(codec, 0x23,0x0a08);
-		rt5631_write(codec, 0x0c,0x0010);
-		rt5631_write(codec, 0x66,0x650a);
+		rt5631_write(codec, 0x0c,0x0006);
+		rt5631_write(codec, 0x66,0x600A);
 		
 	}
 	else
@@ -812,6 +839,14 @@ static int spk_event(struct snd_soc_dapm_widget *w,
 	struct snd_soc_codec *codec = w->codec;
 	static int spkl_out_enable, spkr_out_enable;
 
+#if defined(CONFIG_MALATA_C7022) || defined(CONFIG_MALATA_C1016) ||defined(CONFIG_MALATA_D7007) || defined(CONFIG_MALATA_D8005)\
+	|| defined(CONFIG_MALATA_D7008)
+	bool is_spk = !((rt5631_read(codec, 0x4a)) & 0x04); //detect rt5631 reg4a[3], 0'b:SPK, 1'b:HP ;
+#else
+	bool is_spk = (rt5631_read(codec, 0x4a)) & 0x04;	//detect rt5631 reg4a[3], 1'b:SPK, 0'b:HP ;
+#endif
+	DBG("is_spk = %d spkl_out_enable = %d spkr_out_enable = %d\n",is_spk,spkl_out_enable,spkr_out_enable);
+
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
 
@@ -824,8 +859,9 @@ static int spk_event(struct snd_soc_dapm_widget *w,
 					PWR_SPK_L_VOL, PWR_SPK_L_VOL);
 			rt5631_write_mask(codec, RT5631_PWR_MANAG_ADD1,
 					PWR_CLASS_D, PWR_CLASS_D);
-			rt5631_write_mask(codec, RT5631_SPK_OUT_VOL,
-					0, RT_L_MUTE);
+			if(is_spk)
+				rt5631_write_mask(codec, RT5631_SPK_OUT_VOL,
+						0, RT_L_MUTE);
 			spkl_out_enable = 1;
 		}
 		if (!spkr_out_enable && !strcmp(w->name, "SPKR Amp")) {
@@ -833,8 +869,9 @@ static int spk_event(struct snd_soc_dapm_widget *w,
 					PWR_SPK_R_VOL, PWR_SPK_R_VOL);
 			rt5631_write_mask(codec, RT5631_PWR_MANAG_ADD1,
 					PWR_CLASS_D, PWR_CLASS_D);
-			rt5631_write_mask(codec, RT5631_SPK_OUT_VOL,
-					0, RT_R_MUTE);
+			if(is_spk)
+				rt5631_write_mask(codec, RT5631_SPK_OUT_VOL,
+						0, RT_R_MUTE);
 			spkr_out_enable = 1;
 		}
 		break;
@@ -2405,6 +2442,10 @@ static int rt5631_resume(struct snd_soc_codec *codec)
 #if (RT5631_SPK_TIMER == 1)
 		last_is_spk = !last_is_spk;	//wired~, update eqmode right here by spk_timer.
 #endif
+#if(RT5631_HP_RECORD_TIMER==1)
+	if(hp_record_status == 1)
+		hp_record_status = 0;
+#endif
 
 	return 0;
 }
@@ -2444,7 +2485,8 @@ void codec_set_spk(bool on)
 	mutex_lock(&codec->mutex);
 	if(on){
 		DBG("inter spk open\n");
-#ifdef CONFIG_MALATA_C7011
+#if defined(CONFIG_MALATA_C7011)  ||  defined(CONFIG_MALATA_D7007)  ||  defined(CONFIG_MALATA_D7006) \
+|| defined(CONFIG_MALATA_D8002) ||  defined(CONFIG_MALATA_D7008) || defined(CONFIG_MALATA_D8005)
 		rt5631_write_mask(rt5631_codec, RT5631_SPK_MONO_OUT_CTRL, 0x3c00, 0xfc00);
 #else
 		rt5631_write_mask(rt5631_codec, RT5631_SPK_MONO_OUT_CTRL, 0x6c00, 0xfc00);
@@ -2571,3 +2613,4 @@ module_exit(rt5631_modexit);
 MODULE_DESCRIPTION("ASoC RT5631 driver");
 MODULE_AUTHOR("flove <flove@realtek.com>");
 MODULE_LICENSE("GPL");
+

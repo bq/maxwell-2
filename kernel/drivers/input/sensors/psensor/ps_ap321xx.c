@@ -32,12 +32,6 @@
 #endif
 #include <linux/sensor-dev.h>
 
-#if 0
-#define SENSOR_DEBUG_TYPE SENSOR_TYPE_PROXIMITY
-#define DBG(x...) if(sensor->pdata->type == SENSOR_DEBUG_TYPE) printk(x)
-#else
-#define DBG(x...)
-#endif
 
 #define AP3212B_NUM_CACHABLE_REGS	23
 #define AP3216C_NUM_CACHABLE_REGS	26
@@ -154,16 +148,16 @@ static int ap321xx_product_detect(struct i2c_client *client)
 	if ( mid == 0x01 && pid == 0x01 && 
 	    (rid == 0x03 || rid == 0x04) )
 	{
-		DBG("RevID [%d], ==> DA3212 v1.5~1.8 ...... AP3212B detected\n", rid);
+		//printk("RevID [%d], ==> DA3212 v1.5~1.8 ...... AP3212B detected\n", rid);
 	}
 	else if ( (mid == 0x01 && pid == 0x02 && rid == 0x00) || 
 		      (mid == 0x02 && pid == 0x02 && rid == 0x01))
 	{
-		DBG("RevID [%d], ==> DA3212 v2.0 ...... AP3212C/AP3216C detected\n", rid);
+		//printk("RevID [%d], ==> DA3212 v2.0 ...... AP3212C/AP3216C detected\n", rid);
 	}
 	else
 	{
-		DBG("MakeID[%d] ProductID[%d] RevID[%d] .... can't detect ... bad reversion!!!\n", mid, pid, rid);
+		printk("MakeID[%d] ProductID[%d] RevID[%d] .... can't detect ... bad reversion!!!\n", mid, pid, rid);
 		return -EIO;
 	}
 
@@ -280,7 +274,7 @@ static int sensor_report_value(struct i2c_client *client)
 struct sensor_operate proximity_ap321xx_ops = {
 	.name				= "ps_ap321xx",
 	.type				= SENSOR_TYPE_PROXIMITY,	//sensor type and it should be correct
-	.id_i2c				= PROXIMITY_ID_AP321XX,	//i2c id number
+	.id_i2c				= PROXIMITY_ID_AP321XX_l,	//i2c id number
 	.read_reg			= SENSOR_UNKNOW_DATA,	//read data		//there are two regs, we fix them in code.
 	.read_len			= 1,			//data length
 	.id_reg				= SENSOR_UNKNOW_DATA,	//read device id from this register   //there are 3 regs, we fix them in code.
@@ -311,7 +305,6 @@ static int __init proximity_ap321xx_init(void)
 	int result = 0;
 	int type = ops->type;
 	result = sensor_register_slave(type, NULL, NULL, proximity_get_ops);
-	DBG("%s\n",__func__);
 	return result;
 }
 

@@ -33,12 +33,6 @@
 #include <linux/l3g4200d.h>
 #include <linux/sensor-dev.h>
 
-#if 0
-#define SENSOR_DEBUG_TYPE SENSOR_TYPE_GYROSCOPE
-#define DBG(x...) if(sensor->pdata->type == SENSOR_DEBUG_TYPE) printk(x)
-#else
-#define DBG(x...)
-#endif
 
 #define L3G4200D_ENABLE			0x08
 
@@ -216,7 +210,7 @@ static int sensor_report_value(struct i2c_client *client)
 struct sensor_operate gyro_l3g4200d_ops = {
 	.name				= "l3g4200d",
 	.type				= SENSOR_TYPE_GYROSCOPE,//sensor type and it should be correct
-	.id_i2c				= GYRO_ID_L3G4200D,		//i2c id number
+	.id_i2c				= GYRO_ID_L3G4200D_l,		//i2c id number
 	.read_reg			= GYRO_DATA_REG,		//read data
 	.read_len			= 6,				//data length
 	.id_reg				= GYRO_WHO_AM_I,		//read device id from this register
@@ -246,7 +240,6 @@ static int __init gyro_l3g4200d_init(void)
 	int result = 0;
 	int type = ops->type;
 	result = sensor_register_slave(type, NULL, NULL, gyro_get_ops);
-	DBG("%s\n",__func__);
 	return result;
 }
 

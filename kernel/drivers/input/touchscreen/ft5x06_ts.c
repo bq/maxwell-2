@@ -428,22 +428,22 @@ FTS_BOOL byte_read(FTS_BYTE* pbt_buf, FTS_BYTE bt_len)
 
 #define    FTS_PACKET_LENGTH        128
 
-/* touchscreen firmware for ft5606 10.1 inch project*/
+/* touchscreen firmware for ft5216 7 inch project*/
 static unsigned char CTPM_FW[]=
 {
-  #include "ft_app-ad.h"
+  #include "ft_app-78.h"
 };
 
-/* touchscreen firmware for ft5216 7 inch project*/
+/* touchscreen firmware for ft5406 9 inch project*/
 static unsigned char CTPM_FW2[]=
 {
-  #include "ft_app-77.h"
+  #include "ft_app-24.h"
 };
 
 /* touchscreen firmware for ft5406 7 inch project*/
 static unsigned char CTPM_FW3[]=
 {
-  #include "ft_app-54.h"
+  #include "ft_app-58.h"
 };
 
 /* touchscreen firmware for ft5406 8 inch project smb-d8005*/
@@ -468,7 +468,7 @@ E_UPGRADE_ERR_TYPE  fts_ctpm_fw_upgrade(FTS_BYTE* pbt_buf, FTS_DWRD dw_lenth)
 #ifdef    defined(CONFIG_MALATA_D8005)
     unsigned char au_delay_timings[11] = {10, 11, 12, 13, 14, 15, 9, 8, 7,6,5};
 #else
-    unsigned char au_delay_timings[11] = {30, 33, 36, 39, 42, 45, 27, 24,21,18,15}; 
+    unsigned char au_delay_timings[11] = {30, 33, 36, 39, 42, 45, 27, 24,21,18,15};
 #endif
 
     j = 0;
@@ -484,13 +484,22 @@ E_UPGRADE_ERR_TYPE  fts_ctpm_fw_upgrade(FTS_BYTE* pbt_buf, FTS_DWRD dw_lenth)
  UPGR_START:
       
     printk("[TSP] Step 1: Reset CTPM test\n");
+     /*write 0xaa to register 0xfc*/
+    #if  (defined(CONFIG_MALATA_D9001))     
+    ft5x0x_write_reg(0xfc,0xaa);
+    delay_qt_ms(50);
+     /*write 0x55 to register 0xfc*/
+    ft5x0x_write_reg(0xfc,0x55);
+    #else
     gpio_direction_output(ft5x0x_reset_pin, GPIO_LOW);
     delay_qt_ms(50);
     gpio_direction_output(ft5x0x_reset_pin, GPIO_HIGH);
+    #endif
     #if (defined(CONFIG_MALATA_C7019A))
     delay_qt_ms(30); 
     #endif
-    delay_qt_ms(au_delay_timings[j]); 
+    delay_qt_ms(au_delay_timings[j]);
+    
      // delay_qt_ms(40);
 
     /*********Step 2:Enter upgrade mode *****/
@@ -513,7 +522,7 @@ E_UPGRADE_ERR_TYPE  fts_ctpm_fw_upgrade(FTS_BYTE* pbt_buf, FTS_DWRD dw_lenth)
     #if (defined(CONFIG_MALATA_C7019A))
     if (reg_val[0] == 0x79 && reg_val[1] == 0x07)
     #else
-    #if defined(CONFIG_MALATA_D7008)||defined(CONFIG_MALATA_D8005)||defined(CONFIG_MALATA_C7022)
+    #if defined(CONFIG_MALATA_D7008)||defined(CONFIG_MALATA_D8005)||defined(CONFIG_MALATA_C7022)||defined(CONFIG_MALATA_D9001)
     if (reg_val[0] == 0x79 && reg_val[1] == 0x03)
     #else
     if (reg_val[0] == 0x79 && reg_val[1] == 0x06)
@@ -631,10 +640,14 @@ E_UPGRADE_ERR_TYPE  fts_ctpm_fw_upgrade(FTS_BYTE* pbt_buf, FTS_DWRD dw_lenth)
     }
 
     /*********Step 7: reset the new FW***********************/
-    //cmd_write(0x07,0x00,0x00,0x00,1);
+    #if (defined(CONFIG_MALATA_D9001)) 
+    /* software reset , because D9001 TP hardware reset cannot work*/
+    cmd_write(0x07,0x00,0x00,0x00,1);    
+    #else  
     gpio_direction_output(ft5x0x_reset_pin, GPIO_LOW);
     delay_qt_ms(50);
     gpio_direction_output(ft5x0x_reset_pin, GPIO_HIGH);
+    #endif
     /*make sure CTP startup normally */
     msleep(300);  
     return ERR_OK;
@@ -1319,9 +1332,13 @@ ft5x0x_ts_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	{
           /* compare to last version, if not equal,do update!*/  
 		    
-          #if (defined(CONFIG_MALATA_D7008))
-          	if(( uc_reg_value == 0x52))
+          #if (defined(CONFIG_MALATA_D7008)||defined(CONFIG_MALATA_C7022))
+          	if(( uc_reg_value < 0x58) && ( uc_reg_value > 0x50))
+          	 { 
+          	    /* 0x53 is a special version*/ 	
+		    if(uc_reg_value != 0x53)
 		    fts_ctpm_fw_upgrade_with_i_file3();
+		 }   
 		/* version is 0xa6 means upgrade failed last time */    
 		if( uc_reg_value == 0xa6)
 		    fts_ctpm_fw_upgrade_with_i_file3();	
@@ -1334,6 +1351,24 @@ ft5x0x_ts_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		if( uc_reg_value == 0xa6)
 		    fts_ctpm_fw_upgrade_with_i_file4();	   
           #endif
+          
+          #if (defined(CONFIG_MALATA_D9001))
+          	if(( uc_reg_value < 0x24) && ( uc_reg_value > 0x20))
+		    fts_ctpm_fw_upgrade_with_i_file2();	 
+		/* version is 0xa6 means upgrade failed last time */          
+		if( uc_reg_value == 0xa6)
+		    fts_ctpm_fw_upgrade_with_i_file2();	   
+          #endif
+          
+          #if (defined(CONFIG_MALATA_C7019A))
+          	if(( uc_reg_value < 0x78) && ( uc_reg_value > 0x70))
+		    fts_ctpm_fw_upgrade_with_i_file();	 
+		/* version is 0xa6 means upgrade failed last time */          
+		if( uc_reg_value == 0xa6)
+		    fts_ctpm_fw_upgrade_with_i_file();	   
+          #endif
+          
+          
 	uc_reg_value = ft5x0x_read_fw_ver();
 	printk("[FST] Firmware version = 0x%x\n", uc_reg_value);
 		    
