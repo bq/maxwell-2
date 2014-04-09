@@ -279,6 +279,7 @@ extern int charging_flag;
 #if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
 extern int charge_en_flags;
 extern int check_charge_ok;
+extern int update_temp_ok;
 #endif
 extern int dwc_vbus_status(void);
 extern int get_gadget_connect_flag(void);
@@ -957,7 +958,6 @@ static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 		bat->charge_source_now=0;
 	}
 
-#if defined(CONFIG_MALATA_D1014) || defined(CONFIG_MALATA_D8009)
 	if(bat ->pdata ->control_usb_charging)
 	{
 		if(bat->charge_source_now == 1)
@@ -965,18 +965,8 @@ static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 		else if(bat->charge_source_now == 2)
 			bat ->pdata ->control_usb_charging(0);
 	}
-#endif
 
 	if(bat->charge_source_now != bat->charge_soure_old){
-#if !defined(CONFIG_MALATA_D1014) && !defined(CONFIG_MALATA_D8009)
-		if(bat ->pdata ->control_usb_charging)
-		{
-			if(bat->charge_source_now == 1)
-				bat ->pdata ->control_usb_charging(1);
-			else if(bat->charge_source_now == 2)
-				bat ->pdata ->control_usb_charging(0);
-		}
-#endif
 		for (i = 0; i < NUM_VOLTAGE_SAMPLE; i++){                //0.3 s
 			msleep(1); //mdelay --- > msleep
 			rk30_adc_battery_voltage_samples(bat);              //get new voltage
@@ -1646,7 +1636,9 @@ static int rk30_adc_battery_get_usb_property(struct power_supply *psy,
 #if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
 			if((1 == check_charge_ok) && (!strstr(saved_command_line,"charger")))
 				if(1 == charge_en_flags)
-				val->intval = 0;
+					val->intval = 0;
+				if((1 == charge_en_flags) && (1 == update_temp_ok))
+					val->intval = 0;
 #endif
 			DBG("%s......bat ->usb_charging=%d,charging_flag=%d,strstr=%d\n",__func__,bat ->usb_charging,charging_flag,(!strstr(saved_command_line,"charger")));
 
@@ -1703,7 +1695,9 @@ static int rk30_adc_battery_get_ac_property(struct power_supply *psy,
 #if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
 			if((1 == check_charge_ok) && (!strstr(saved_command_line,"charger")))
 				if(1 == charge_en_flags)
-				val->intval = 0;
+					val->intval = 0;
+				if((1 == charge_en_flags) && (1 == update_temp_ok))
+					val->intval = 0;
 #endif
 			DBG("%s......bat ->ac_charging=%d,charging_flag=%d,strstr=%d\n",__func__,bat ->ac_charging,charging_flag,(!strstr(saved_command_line,"charger")));
 		}

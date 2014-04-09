@@ -50,6 +50,8 @@ static struct clk *pwm_clk;
 static void __iomem *pwm_base;
 static struct backlight_device *rk29_bl;
 static int suspend_flag = 0;
+static int close_lcd = 0;
+static int brightness_save = 0;
 static int bl_init = 0;
 
 int convertint(const char s[])
@@ -216,6 +218,8 @@ static int rk29_bl_update_status(struct backlight_device *bl)
 		rk_pwm_setup(id, PWM_DIV, divh, div_total);
 	}
 
+	if(close_lcd == 0)
+		brightness_save = bl->props.brightness;
 	DBG("%s:line=%d,brightness = %d, div_total = %d, divh = %d state=%x \n",__FUNCTION__,__LINE__,brightness, div_total, divh,bl->props.state);
 out:
 	mutex_unlock(&backlight_mutex);
@@ -311,6 +315,22 @@ void rk29_backlight_set(bool on)
 	return;
 }
 EXPORT_SYMBOL(rk29_backlight_set);
+
+void rk29_backlight_set_old(bool on)
+{
+	if(!on){
+		rk29_bl->props.brightness = 0;
+		close_lcd = 1;
+	}
+	else{
+		rk29_bl->props.brightness = brightness_save;
+		close_lcd = 0;
+	}
+	rk29_bl_update_status(rk29_bl);
+
+	return;
+}
+EXPORT_SYMBOL(rk29_backlight_set_old);
 #endif
 
 static int rk29_backlight_probe(struct platform_device *pdev)

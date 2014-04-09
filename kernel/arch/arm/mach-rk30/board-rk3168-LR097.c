@@ -938,8 +938,8 @@ static struct sensor_platform_data akm8963_info =
 		},
 	#elif defined(CONFIG_MALATA_D1004) && defined(CONFIG_MALATA_D7022)
 		{
-			{0, -1, 0},
 			{1, 0, 0},
+			{0, 1, 0},
 			{0, 0, 1},
 		},
 	#else
@@ -1609,6 +1609,7 @@ static struct rt5616_codec_platform_data rt5616_codec_pdata = {
 	.fb_status = fb_status,
 	.fb_lcd_drv_ctl = fb_lcd_drv_ctl,
 };
+unsigned int rt5616_codec_spk_io;
 #endif
 #ifdef CONFIG_RK_HDMI
 #define RK_HDMI_RST_PIN 			RK30_PIN3_PB2
@@ -3705,14 +3706,14 @@ static void rk30_pm_power_off(void)
 		tps65910_device_shutdown();//tps65910 shutdown
 	}
 	#endif
-
+/*
 // Mute PA before system power down to avoid "pop" noise, xmylm, 20130704, MT-BUG:9568
 #ifdef CONFIG_SND_SOC_RT5616
 	if (rt5616_codec_pdata.spk_ctl_io)
 		gpio_direction_output(rt5616_codec_pdata.spk_ctl_io, GPIO_LOW);
 	msleep(50);
 #endif
-
+*/
 	gpio_direction_output(POWER_ON_PIN, GPIO_LOW);
 	while (1);
 }
@@ -3802,6 +3803,11 @@ static void __init machine_rk30_board_init(void)
         gpio_direction_output(POWER_ON_PIN, GPIO_HIGH);
 #if defined (CONFIG_BATTERY_BQ24196)
 	bq24196_charge_en();
+#endif
+
+#ifdef CONFIG_SND_SOC_RT5616
+	if (rt5616_codec_pdata.spk_ctl_io)
+		rt5616_codec_spk_io = rt5616_codec_pdata.spk_ctl_io;
 #endif
 
 	rk30_i2c_register_board_info();

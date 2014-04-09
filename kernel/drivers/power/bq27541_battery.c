@@ -452,6 +452,13 @@ static int bq27541_battery_status(struct bq27541_device_info *di,
 			}else{
 				stop_charging = 0;
 			}
+
+			if(1 == update_temp_ok){
+                        	if(1 == charge_en_flags)
+                                        status = POWER_SUPPLY_STATUS_NOT_CHARGING;
+                                else
+                                        update_temp_ok = 0; 
+			}
 		}
 #endif
 
@@ -722,6 +729,7 @@ static void battery_capacity_check(struct bq27541_device_info *di)
 	return;
 }
 
+#if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
 static ssize_t stop_charging_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -749,6 +757,7 @@ err0:
 err:
 	return ret;
 }
+#endif
 
 static int bq27541_battery_probe(struct i2c_client *client,
 				 const struct i2c_device_id *id)

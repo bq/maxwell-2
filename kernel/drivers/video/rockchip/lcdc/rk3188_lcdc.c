@@ -1009,6 +1009,11 @@ static int rk3188_lcdc_early_resume(struct rk_lcdc_device_driver *dev_drv)
 		lcdc_msk_reg(lcdc_dev, SYS_CTRL,m_LCDC_STANDBY,v_LCDC_STANDBY(0));
 		lcdc_cfg_done(lcdc_dev);
 	}
+      if(dev_drv->screen_ctr_info->fb_id == 0){
+		lcdc_msk_reg(lcdc_dev,DSP_CTRL1,m_BLANK_EN ,v_BLANK_EN(0));
+		lcdc_cfg_done(lcdc_dev);
+	}
+
 	spin_unlock(&lcdc_dev->reg_lock);
 
 	if(!lcdc_dev->atv_layer_cnt)

@@ -461,6 +461,7 @@ static int rk_fb_ioctl(struct fb_info *info, unsigned int cmd,unsigned long arg)
     return 0;
 }
 
+extern void rk29_backlight_set_old(bool on);
 static int rk_fb_blank(int blank_mode, struct fb_info *info)
 {
     	struct rk_lcdc_device_driver *dev_drv = (struct rk_lcdc_device_driver * )info->par;
@@ -477,6 +478,24 @@ static int rk_fb_blank(int blank_mode, struct fb_info *info)
 	if(hdmi_get_hotplug() == HDMI_HPD_ACTIVED){
 		printk("hdmi is connect , not blank lcdc\n");
 	}else
+#else
+	dev_drv->blank(dev_drv,layer_id,blank_mode);
+
+	if(hdmi_get_hotplug() == HDMI_HPD_ACTIVED){
+		if(blank_mode == FB_BLANK_NORMAL){
+			if(dev_drv->screen_ctr_info->io_disable)
+				dev_drv->screen_ctr_info->io_disable();
+		#ifdef CONFIG_BACKLIGHT_RK29_BL
+				rk29_backlight_set_old(0);
+		#endif
+		}else{
+			if(dev_drv->screen_ctr_info->io_enable)
+				dev_drv->screen_ctr_info->io_enable();
+		#ifdef CONFIG_BACKLIGHT_RK29_BL
+				rk29_backlight_set_old(1);
+		#endif
+		}
+	}
 #endif
 #endif
 	{

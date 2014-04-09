@@ -41,6 +41,7 @@
 #include <linux/syscore_ops.h>
 #include <linux/version.h>
 #include <linux/ctype.h>
+#include <mach/gpio.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -70,6 +71,9 @@
 extern void rk29_backlight_set(bool on);
 #endif
 
+#ifdef CONFIG_SND_SOC_RT5616
+extern unsigned int rt5616_codec_spk_io;
+#endif
 #ifdef CONFIG_FB_ROCKCHIP
 extern int rk_fb_io_disable(void);
 #endif
@@ -408,6 +412,12 @@ EXPORT_SYMBOL_GPL(kernel_halt);
  */
 void kernel_power_off(void)
 {
+#ifdef CONFIG_SND_SOC_RT5616
+	if (rt5616_codec_spk_io)
+		gpio_direction_output(rt5616_codec_spk_io, GPIO_LOW);
+	msleep(50);
+#endif
+
 #ifdef CONFIG_BACKLIGHT_RK29_BL
 #if defined(CONFIG_MALATA_D7022)
 	rk29_backlight_set(0);
