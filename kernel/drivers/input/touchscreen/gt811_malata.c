@@ -705,11 +705,11 @@ static int goodix_ts_power(struct goodix_ts_data * ts, int on)
 		case 1:
 			printk("Goodix GT811 resume\n");
 			gpio_direction_output(ts->rst_pin,1);
-			msleep(20);
+			msleep(120);
 			gpio_direction_output(ts->rst_pin,0);
-			msleep(20);
+			msleep(120);
 			gpio_direction_output(ts->rst_pin,1);
-			msleep(20);
+			msleep(120);
 			goodix_init_panel(ts);
 			ret = 0;
 			return ret;
