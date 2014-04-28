@@ -30,12 +30,12 @@
 struct bq24196_device_info *bq24196_di;
 struct bq24196_platform_data *bq24196_pdata;
 static int bq24196_int = 0;
+int bq24196_mode = 0;
 #if 0
 #define DBG(x...) printk(KERN_INFO x)
 #else
 #define DBG(x...) do { } while (0)
 #endif
-
 
 /*
  * Common code for BQ24196 devices read
@@ -198,8 +198,8 @@ static int bq24196_update_input_current_limit(u8 value)
 
 	ret = bq24196_update_reg(bq24196_di->client,
 				INPUT_SOURCE_CONTROL_REGISTER,
-				value << IINLIM_OFFSET,
-				IINLIM_MASK << IINLIM_OFFSET);
+				((value << IINLIM_OFFSET) | (EN_HIZ_DISABLE << EN_HIZ_OFFSET)),
+				((IINLIM_MASK << IINLIM_OFFSET) | (EN_HIZ_MASK << EN_HIZ_OFFSET)));
 	if (ret < 0) {
 		dev_err(&bq24196_di->client->dev, "%s(): Failed to set input current limit (0x%x) \n",
 				__func__, value);
@@ -207,52 +207,18 @@ static int bq24196_update_input_current_limit(u8 value)
 	return ret;
 }
 
-static int bq24196_update_charge_current_limit(u8 value)
+static int bq24196_update_en_hiz_disable(void)
 {
 	int ret = 0;
 
 	ret = bq24196_update_reg(bq24196_di->client,
-				CHARGE_CURRENT_CONTROL_REGISTER,
-				value << CHARGE_CURRENT_CONFIG_OFFSET,
-				CHARGE_CURRENT_CONFIG_MASK << CHARGE_CURRENT_CONFIG_OFFSET);
+				INPUT_SOURCE_CONTROL_REGISTER,
+				EN_HIZ_DISABLE << EN_HIZ_OFFSET,
+				EN_HIZ_MASK << EN_HIZ_OFFSET);
 	if (ret < 0) {
-		dev_err(&bq24196_di->client->dev, "%s(): Failed to set charge current limit (0x%x) \n",
-				__func__, value);
+		dev_err(&bq24196_di->client->dev, "%s(): Failed to set en_hiz_disable\n",
+				__func__);
 	}
-	return ret;
-}
-
-static int bq24196_update_ir_compensation_resistor_setting(u8 value)
-{
-	int ret = 0;
-
-	ret = bq24196_update_reg(bq24196_di->client,
-				THERMAIL_REGULATOION_CONTROL_REGISTER,
-				value << IR_RESISTOR_OFFSET,
-				IR_RESISTOR_MASK << IR_RESISTOR_OFFSET);
-	if (ret < 0) {
-		dev_err(&bq24196_di->client->dev, "%s(): Failed to set ir compensation resistor (0x%x) \n",
-				__func__, value);
-	}
-
-
-	return ret;
-}
-
-static int bq24196_update_ir_compensation_voltage_clamp(u8 value)
-{
-	int ret = 0;
-
-	ret = bq24196_update_reg(bq24196_di->client,
-				THERMAIL_REGULATOION_CONTROL_REGISTER,
-				value << IR_VOLTAGE_CLAMP_OFFSET,
-				IR_VOLTAGE_CLAMP_MASK << IR_VOLTAGE_CLAMP_OFFSET);
-	if (ret < 0) {
-		dev_err(&bq24196_di->client->dev, "%s(): Failed to set ir compensation voltage clamp(0x%x) \n",
-				__func__, value);
-	}
-
-
 	return ret;
 }
 
@@ -264,22 +230,18 @@ int bq24196_set_input_current(int on)
 	if(1 == on){
 #ifdef CONFIG_BATTERY_RK30_USB_AND_CHARGE
 		bq24196_update_input_current_limit(IINLIM_2000MA);
-//		bq24196_update_charge_current_limit(CHARGE_CURRENT_CONFIG_3072MA);
-//		bq24196_update_ir_compensation_resistor_setting(IR_RESISTOR_70OHM);
-//		bq24196_update_ir_compensation_voltage_clamp(IR_VOLTAGE_CLAMP_112MV);
 #else
 		bq24196_update_input_current_limit(IINLIM_3000MA);
 #endif
 	}else{
 		bq24196_update_input_current_limit(IINLIM_500MA);
-//		bq24196_update_ir_compensation_resistor_setting(IR_RESISTOR_0OHM);
-//		bq24196_update_ir_compensation_voltage_clamp(IR_VOLTAGE_CLAMP_0MV);
 	}
 	DBG("bq24196_set_input_current %s\n", on ? "3000mA" : "500mA");
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(bq24196_set_input_current);
+
 
 static int bq24196_update_charge_mode(u8 value)
 {
@@ -309,8 +271,6 @@ static int bq24196_update_otg_mode_current(u8 value)
 		dev_err(&bq24196_di->client->dev, "%s(): Failed to set otg current mode(0x%x) \n",
 				__func__, value);
 	}
-
-	return ret;
 }
 
 static int bq24196_otg_mode_current_check(void)
@@ -336,12 +296,18 @@ static int bq24196_otg_mode_current_check(void)
 
 static int bq24196_charge_mode_config(int on)
 {
+	int i = 0;
+
 	if(!bq24196_int)
 		return 0;
 
-	if(1 == on){
+	if(1 == on)
+	{
+		bq24196_update_en_hiz_disable();
+		mdelay(5);
 		bq24196_update_charge_mode(CHARGE_MODE_CONFIG_OTG_OUTPUT);
-		bq24196_update_otg_mode_current(OTG_MODE_CURRENT_CONFIG_500MA);
+		mdelay(10);
+		bq24196_update_otg_mode_current(OTG_MODE_CURRENT_CONFIG_1300MA);
 		gpio_direction_output(bq24196_pdata->otg_en_pin, 1);
 	}else{
 		gpio_direction_output(bq24196_pdata->otg_en_pin, 0);
@@ -363,11 +329,12 @@ static void otg_irq_wakeup(struct work_struct *work)
 
 	if(1 == gpio_get_value(bq24196_pdata->otg_irq_pin))
 	{
+		bq24196_mode = 1;
 		bq24196_charge_mode_config(1);
-		otg_flag = 1;
 	}else{
 		bq24196_charge_mode_config(0);
-		otg_flag = 0;
+		msleep(500);
+		bq24196_mode = 0;
 	}
 	DBG("%s: otg_irq_pin is %s\n", __func__,gpio_get_value(bq24196_pdata->otg_irq_pin) ? "high" : "low");
 
@@ -384,28 +351,74 @@ static DECLARE_DELAYED_WORK(otg_irq_work, otg_irq_wakeup);
 static irqreturn_t otg_irq_handler(int irq, void *dev_id)
 {
 	disable_irq_nosync(irq);
-	schedule_delayed_work(&otg_irq_work, 0);
+	schedule_delayed_work(&otg_irq_work, HZ * 1);
 	return IRQ_HANDLED;
 }
 
 static irqreturn_t status_irq_handler(int irq, void *dev_id);
-
+static void status_irq_wakeup(struct work_struct *work);
+static DECLARE_DELAYED_WORK(status_irq_work, status_irq_wakeup);
+static int status_irq_delay = 0;
 static void status_irq_wakeup(struct work_struct *work)
+	{
+		DBG("%s\n", __func__);
+
+		if(1 == bq24196_mode){
+			if(1 == bq24196_otg_mode_current_check())
+			{
+				bq24196_charge_mode_config(0);
+				bq24196_mode = 0;
+				otg_flag = 1;
+				DBG("OTG over current\n");
+				status_irq_delay = 1000;
+				schedule_delayed_work(&status_irq_work, msecs_to_jiffies(status_irq_delay));
+			}
+		}else{
+			if((1 == gpio_get_value(bq24196_pdata->otg_irq_pin)) && (otg_flag == 1))
+			{
+				bq24196_mode = 1;
+				bq24196_charge_mode_config(1);
+				otg_flag = 0;
+				DBG("OTG output again\n");
+			}
+		}
+	}
+/******************status_irq_wakeup instead of otg_status_timer******
+static void otg_status_timer(unsigned long _data)
 {
-	if(1 == otg_flag){
+	DBG("%s\n", __func__);
+
+	if(1 == bq24196_mode){
 		if(1 == bq24196_otg_mode_current_check())
 		{
 			bq24196_charge_mode_config(0);
+			bq24196_mode = 0;
+			otg_flag = 1;
 			DBG("OTG over current\n");
+			mod_timer(&bq24196_di->timer, jiffies + msecs_to_jiffies(1000));
+		}
+	}else{
+		if((1 == gpio_get_value(bq24196_pdata->otg_irq_pin)) && (otg_flag == 1))
+		{
+			bq24196_mode = 1;
+			bq24196_charge_mode_config(1);
+			otg_flag = 0;
+			DBG("OTG output again\n");
 		}
 	}
 }
-
-static DECLARE_DELAYED_WORK(status_irq_work, status_irq_wakeup);
-
+*******************/
 static irqreturn_t status_irq_handler(int irq, void *dev_id)
 {
-	schedule_delayed_work(&status_irq_work, 0);
+	DBG("%s\n", __func__);
+	//mod_timer(&bq24196_di->timer, jiffies + msecs_to_jiffies(100));
+	if(status_irq_delay == 1000)
+	{
+		cancel_delayed_work(&status_irq_work);
+	}
+	status_irq_delay = 100;
+	schedule_delayed_work(&status_irq_work, msecs_to_jiffies(status_irq_delay));
+
 	return IRQ_HANDLED;
 }
 
@@ -439,6 +452,7 @@ static int bq24196_battery_probe(struct i2c_client *client,
 		gpio_direction_output(pdata->otg_en_pin, 0);
 	}
 
+
 	di = kzalloc(sizeof(*di), GFP_KERNEL);
 	if (!di) {
 		dev_err(&client->dev, "failed to allocate device info data\n");
@@ -451,11 +465,6 @@ static int bq24196_battery_probe(struct i2c_client *client,
 	bq24196_di = di;
 	bq24196_pdata = pdata;
 
-#ifdef CONFIG_BATTERY_BQ24196_OTG_MODE
-	if(pdata->irq_init)
-		pdata->irq_init();
-#endif
-
 	/* get the vendor id */
 	ret = bq24196_read(di->client, VENDOR_STATS_REGISTER, &retval, 1);
 	if (ret < 0) {
@@ -464,7 +473,12 @@ static int bq24196_battery_probe(struct i2c_client *client,
 		goto batt_failed_4;
 	}
 
+	bq24196_init_registers();
+
 #ifdef CONFIG_BATTERY_BQ24196_OTG_MODE
+	if(pdata->irq_init)
+		pdata->irq_init();
+
 	if (pdata->otg_irq_pin != INVALID_GPIO){
 		irq = gpio_to_irq(pdata->otg_irq_pin);
 		irq_flag = gpio_get_value (pdata->otg_irq_pin) ? IRQF_TRIGGER_FALLING : IRQF_TRIGGER_RISING;
@@ -485,9 +499,8 @@ static int bq24196_battery_probe(struct i2c_client *client,
 			goto err_statusirq_failed;
 		}
 	}
+	//setup_timer(&di->timer, otg_status_timer, (unsigned long)di);
 #endif
-
-	bq24196_init_registers();
 
 	bq24196_int =1;
 
@@ -497,15 +510,26 @@ static int bq24196_battery_probe(struct i2c_client *client,
 batt_failed_4:
 	kfree(di);
 batt_failed_2:
-#ifdef CONFIG_BATTERY_BQ24196_OTG_MODE
 err_statusirq_failed:
 	free_irq(gpio_to_irq(pdata->status_irq_pin), NULL);
 err_otgirq_failed:
 	free_irq(gpio_to_irq(pdata->otg_irq_pin), NULL);
-#endif
 	return retval;
 }
 
+static int bq24196_battery_shutdown(struct i2c_client *client)
+{
+	int ret = 0;
+
+#ifdef CONFIG_BATTERY_BQ24196_OTG_MODE
+	free_irq(gpio_to_irq(bq24196_pdata->status_irq_pin), NULL);
+	free_irq(gpio_to_irq(bq24196_pdata->otg_irq_pin), NULL);
+
+	gpio_direction_output(bq24196_pdata->otg_en_pin, 0);
+	bq24196_update_charge_mode(CHARGE_MODE_CONFIG_CHARGE_BATTERY);
+	mdelay(100);
+#endif
+}
 static int bq24196_battery_remove(struct i2c_client *client)
 {
 	struct bq24196_device_info *di = i2c_get_clientdata(client);
@@ -523,6 +547,7 @@ static struct i2c_driver bq24196_battery_driver = {
 	},
 	.probe = bq24196_battery_probe,
 	.remove = bq24196_battery_remove,
+	.shutdown = bq24196_battery_shutdown,
 	.id_table = bq24196_id,
 };
 

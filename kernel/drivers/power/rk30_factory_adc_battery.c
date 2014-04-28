@@ -57,11 +57,15 @@ module_param_named(dbg_level, rk30_battery_dbg_level, int, 0644);
 #define	TIMER_MS_COUNTS		 1000	
 #define	SLOPE_SECOND_COUNTS	               15	
 #define	DISCHARGE_MIN_SECOND	               45	
-#define	CHARGE_MIN_SECOND	               45	
+#if defined(CONFIG_MALATA_D9001)
+	#define	CHARGE_MIN_SECOND	               115
+#else
+	#define	CHARGE_MIN_SECOND	               45
+#endif
 #define	CHARGE_MID_SECOND	               90	
 #define	CHARGE_MAX_SECOND	               600
 #define	CHARGE_FULL_DELAY_TIMES          10
-#define	USBCHARGE_IDENTIFY_TIMES        1
+#define	USBCHARGE_IDENTIFY_TIMES        6
 
 #define	NUM_VOLTAGE_SAMPLE	                       ((SLOPE_SECOND_COUNTS * 1000) / TIMER_MS_COUNTS)	 
 #define	NUM_DISCHARGE_MIN_SAMPLE	         ((DISCHARGE_MIN_SECOND * 1000) / TIMER_MS_COUNTS)	 
@@ -121,7 +125,7 @@ char gDischargeFlag[3] = {"on "};
 #endif
 
 #ifdef CONFIG_BATTERY_BT_C0B2G
-#define BATT_MAX_VOL_VALUE                             4120               	//Full  charge volate
+#define BATT_MAX_VOL_VALUE                             4218               	//Full  charge volate
 #define BATT_ZERO_VOL_VALUE                            3500              	//power down voltage
 #define BATT_NOMAL_VOL_VALUE                         3800
 #define BATT_CHARGE_OFFSET				10
@@ -142,10 +146,10 @@ char gDischargeFlag[3] = {"on "};
 #endif
 
 #ifdef CONFIG_BATTERY_BT_D001_386789
-#define BATT_MAX_VOL_VALUE                             4179               	//Full  charge volate
-#define BATT_ZERO_VOL_VALUE                            3500              	//power down voltage
+#define BATT_MAX_VOL_VALUE                             4178               	//Full  charge volate
+#define BATT_ZERO_VOL_VALUE                            3550              	//power down voltage
 #define BATT_NOMAL_VOL_VALUE                         3800
-#define BATT_CHARGE_OFFSET				10
+#define BATT_CHARGE_OFFSET				20
 #endif
 
 #ifdef CONFIG_BATTERY_BT_C0B5
@@ -187,9 +191,9 @@ static int batt_table[2*BATT_NUM+6] =
 #ifdef CONFIG_BATTERY_BT_C0B2G
 static int batt_table[2*BATT_NUM+6] =
 {
-	0x4B434F52,0x7461625F,0x79726574,0,100,100,
-	3500, 3552, 3583, 3600, 3635, 3676, 3720, 3764, 3845, 3903, 4008,  //discharge
-	3676, 3947, 3987, 4008, 4048, 4106, 4127, 4142, 4145, 4152, 4155	  //charge
+	0x4B434F52,0x7461625F,0x79726574,0,200,200,
+	3502, 3593, 3649, 3668, 3701, 3754, 3800, 3861, 3930, 4026, 4096,  //discharge
+	3827, 4040, 4081, 4135, 4185, 4196, 4200, 4213, 4215, 4217, 4218,	  //charge
 };
 #endif
 
@@ -215,8 +219,8 @@ static int batt_table[2*BATT_NUM+6] =
 static int batt_table[2*BATT_NUM+6] =
 {
        0x4B434F52, 0x7461625F, 0x79726574, 0, 200, 200,
-       3500, 3603, 3651, 3673, 3697, 3730, 3784, 3847, 3905, 3988, 4043,       //discharge
-       3550, 3982, 4018, 4054, 4106, 4163, 4174, 4176, 4178, 4179, 4180,      //ac charge
+       3550, 3613, 3658, 3673, 3697, 3730, 3784, 3847, 3905, 3988, 4043,       //discharge
+       3865, 4048, 4105, 4153, 4160, 4168, 4172, 4173, 4175, 4177, 4178,      //ac charge
 };
 #endif
 
@@ -225,7 +229,7 @@ static int batt_table[2*BATT_NUM+6] =
 {
        0x4B434F52, 0x7461625F, 0x79726574, 0, 200, 200,
        3500, 3533, 3563, 3587, 3613, 3656, 3692, 3754, 3817, 3885, 4123,       //discharge
-       3550, 3959, 4001, 4039, 4092, 4125, 4135, 4142, 4148, 4150, 4154,       //ac charge
+       3700, 3959, 4001, 4039, 4092, 4125, 4135, 4142, 4148, 4150, 4154,       //ac charge
 };
 #endif
 
@@ -280,6 +284,9 @@ struct rk30_adc_battery_data {
 	struct delayed_work	   check_work;
 	struct work_struct 	    dcwakeup_work;
 	struct work_struct                   lowerpower_work;
+	struct work_struct 	    load_capacity_work;
+	struct work_struct 	    put_capacity_work;
+
 	bool                    resume;
 	
 	struct rk30_adc_battery_platform_data *pdata;
@@ -337,6 +344,10 @@ struct rk30_adc_battery_data {
 static struct rk30_adc_battery_data *gBatteryData;
 static struct wake_lock batt_wake_lock;
 static struct wake_lock charge_display_lock;
+static struct wake_lock dc_wakelock;
+static int charge_display_lock_status = 0;
+static int usb_identify_flag = 0;
+
 int system_lowerpower = 0;
 bool is_ac_charge = false;
 bool is_usb_charge = false;
@@ -350,13 +361,38 @@ volatile bool low_usb_charge = false;
 #if defined(CONFIG_BATTERY_BQ27425)
 	extern int bq27425_init;
 #endif
+static int put_capacity_num = 0;
+
+#ifdef CONFIG_BATTERY_BQ24196_OTG_MODE
+extern int bq24196_mode;
+#endif
+extern int charging_flag;
+
+#if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
+extern int charge_en_flags;
+extern int check_charge_ok;
+extern int update_temp_ok;
+#endif
 
 extern int dwc_vbus_status(void);
 extern int get_gadget_connect_flag(void);
 extern int dwc_otg_check_dpdm(void);
 static int  is_charge_ok(struct rk30_adc_battery_data *bat);
 static void rk30_adc_battery_voltage_samples(struct rk30_adc_battery_data *bat);
+static int rk30_adc_battery_voltage_to_capacity(struct rk30_adc_battery_data *bat, int BatVoltage);
 
+bool is_accharging(void)
+{
+	return is_ac_charge;
+}
+bool is_usbcharging(void)
+{
+	return is_usb_charge;
+}
+bool low_usb_charging(void)
+{
+	return low_usb_charge;
+}
 
 #ifdef  BATTERY_APK
 static ssize_t bat_param_read(struct device *dev,struct device_attribute *attr, char *buf)
@@ -455,11 +491,313 @@ static ssize_t rkbatt_restore_flag_attrs(struct device *dev,
 	DBG("%s...battery_test_flag=%d,liFlag=%d\n",__func__,battery_test_flag,liFlag);
 	return size;
 }
+
+#define ADC_PROC_FILENAME   "/proc/mtd"
+#define ADC_CABLIC_FILE "gsensor"
+
+typedef struct {
+    int device_index;
+    unsigned int size;
+    unsigned int erase_size;
+    char *name;
+} AdcPartition;
+
+typedef struct {
+    AdcPartition *partitions;
+    int partitions_allocd;
+    int partition_count;
+} AdcState;
+
+static AdcState adc_mtd_state = {
+    NULL,   // partitions
+    0,      // partitions_allocd
+    -1      // partition_count
+};
+
+struct adc_cal_data {
+	int valid;
+	int cap;
+	char reser[512];
+};
+
+static int adc_mtd_index = -1;
+static int load_cap_value = -1;
+struct adc_cal_data adc_cal[1];
+
+int adc_scan_partitions()
+{
+    char buf[2048];
+    const char *bufp;
+    int fd;
+    int i;
+    ssize_t nbytes;
+
+    if (adc_mtd_state.partitions == NULL) {
+        const int nump = 32;
+        AdcPartition *partitions = kmalloc(nump * sizeof(*partitions), GFP_KERNEL);
+        if (partitions == NULL) {
+            return -1;
+        }
+        adc_mtd_state.partitions = partitions;
+        adc_mtd_state.partitions_allocd = nump;
+        memset(partitions, 0, nump * sizeof(*partitions));
+    }
+    adc_mtd_state.partition_count = 0;
+
+    /* Initialize all of the entries to make things easier later.
+     * (Lets us handle sparsely-numbered partitions, which
+     * may not even be possible.)
+     */
+    for (i = 0; i < adc_mtd_state.partitions_allocd; i++) {
+        AdcPartition *p = &adc_mtd_state.partitions[i];
+        if (p->name != NULL) {
+            kfree(p->name);
+            p->name = NULL;
+        }
+        p->device_index = -1;
+    }
+
+    /* Open and read the file contents.
+     */
+    fd = sys_open(ADC_PROC_FILENAME, O_RDONLY, 0);
+    if (fd < 0) {
+        goto bail;
+    }
+    nbytes = sys_read(fd, buf, sizeof(buf) - 1);
+    sys_close(fd);
+    if (nbytes < 0) {
+        goto bail;
+    }
+    buf[nbytes] = '\0';
+
+    /* Parse the contents of the file, which looks like:
+     *
+     *     # cat /proc/mtd
+     *     dev:    size   erasesize  name
+     *     mtd0: 00080000 00020000 "bootloader"
+     *     mtd1: 00400000 00020000 "mfg_and_gsm"
+     *     mtd2: 00400000 00020000 "0000000c"
+     *     mtd3: 00200000 00020000 "0000000d"
+     *     mtd4: 04000000 00020000 "system"
+     *     mtd5: 03280000 00020000 "userdata"
+     */
+    bufp = buf;
+    while (nbytes > 0) {
+        int mtdnum, mtdsize, mtderasesize;
+        int matches;
+        char mtdname[64];
+        mtdname[0] = '\0';
+        mtdnum = -1;
+
+        matches = sscanf(bufp, "mtd%d: %x %x \"%63s\"",
+                &mtdnum, &mtdsize, &mtderasesize, mtdname);
+        if (mtdname[strlen(mtdname) - 1] == '"') {
+			mtdname[strlen(mtdname) - 1] = '\0';
+        }
+        /* This will fail on the first line, which just contains
+         * column headers.
+         */
+        if (matches == 4) {
+            AdcPartition *p = &adc_mtd_state.partitions[mtdnum];
+            p->device_index = mtdnum;
+            p->size = mtdsize;
+            p->erase_size = mtderasesize;
+            p->name = kmalloc(sizeof(mtdname), GFP_KERNEL);
+            if (p->name == NULL) {
+                goto bail;
+            }
+            strcpy(p->name, mtdname);
+            adc_mtd_state.partition_count++;
+        }
+
+        /* Eat the line.
+         */
+        while (nbytes > 0 && *bufp != '\n') {
+            bufp++;
+            nbytes--;
+        }
+        if (nbytes > 0) {
+            bufp++;
+            nbytes--;
+        }
+    }
+
+    return adc_mtd_state.partition_count;
+
+bail:
+    // keep "partitions" around so we can free the names on a rescan.
+    printk("fail!!!");
+    adc_mtd_state.partition_count = -1;
+    return -1;
+}
+
+static int adc_find_partition_by_name(const char *name)
+{
+	int i;
+
+	if (adc_mtd_state.partitions == NULL)
+		adc_scan_partitions();
+
+    if (adc_mtd_state.partitions != NULL) {
+        for (i = 0; i < adc_mtd_state.partitions_allocd; i++) {
+            AdcPartition *p = &adc_mtd_state.partitions[i];
+            if (p->device_index >= 0 && p->name != NULL) {
+                if (strcmp(p->name, name) == 0) {
+                    return p->device_index;
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+static int rk30_adc_battery_load_capacity(void)
+{
+	char mtddevname[64];
+	char value[4];
+	int* p = (int *)value;
+
+	DBG("%s:adc_mtd_index = %d\n", __func__, adc_mtd_index);
+
+	if (adc_mtd_index >= 0) {
+	    sprintf(mtddevname, "/dev/mtd/mtd%d", adc_mtd_index);
+		long fd = sys_open(mtddevname,O_RDONLY,0);
+
+		if(fd < 0){
+			printk("rk30_adc_battery_load_capacity: open file /dev/mtd/mtd%d failed\n", adc_mtd_index);
+			return -1;
+		}
+
+		adc_cal[0].valid = 0;
+		adc_cal[0].cap = 0;
+		sys_lseek(fd, 10 * BLOCK_SIZE, SEEK_SET);
+		sys_read(fd,(char __user *)adc_cal,sizeof(adc_cal));
+		sys_close(fd);
+
+		if(adc_cal[0].valid == 12345678){
+			return adc_cal[0].cap;
+		}else{
+			printk("adc_cal error\n");
+			return -1;
+		}
+	} else {
+		long fd = sys_open(BATT_FILENAME,O_RDONLY,0);
+
+		if(fd < 0){
+			printk("rk30_adc_battery_load_capacity: open file /data/bat_last_capacity.dat failed\n");
+			return -1;
+		}
+
+		sys_read(fd,(char __user *)value,4);
+		sys_close(fd);
+	}
+
+	return (*p);
+}
+
+static void rk30_adc_battery_put_capacity(int loadcapacity)
+{
+	char mtddevname[64];
+	char value[4];
+	int* p = (int *)value;
+	long fd;
+
+	DBG("%s:adc_mtd_index = %d, loadcapacity = %d\n", __func__, adc_mtd_index, loadcapacity);
+
+	if (adc_mtd_index >= 0) {
+	    sprintf(mtddevname, "/dev/mtd/mtd%d", adc_mtd_index);
+		fd = sys_open(mtddevname,O_CREAT | O_RDWR | O_TRUNC,0);
+		if(fd < 0){
+			printk("rk30_adc_battery_put_capacity: open file /dev/mtd/mtd%d failed\n", adc_mtd_index);
+		}else{
+			adc_cal[0].cap = loadcapacity;
+			adc_cal[0].valid = 12345678;
+
+			sys_lseek(fd, 10 * BLOCK_SIZE, SEEK_SET);
+			sys_write(fd, (char __user *)adc_cal,sizeof(adc_cal));
+			sys_close(fd);
+		}
+	}
+
+	fd = sys_open(BATT_FILENAME,O_CREAT | O_RDWR,0);
+	if(fd < 0){
+		printk("rk30_adc_battery_put_capacity: open file /data/bat_last_capacity.dat failed\n");
+		return;
+	}else{
+		*p = loadcapacity;
+		sys_write(fd, (const char __user *)value, 4);
+		sys_close(fd);
+	}
+}
+
+static void rk30_adc_battery_load_capacity_delaywork(struct work_struct *work)
+{
+	load_cap_value = rk30_adc_battery_load_capacity();
+}
+
+static void rk30_adc_battery_put_capacity_delaywork(struct work_struct *work)
+{
+	rk30_adc_battery_put_capacity(gBatteryData->bat_capacity);
+}
+
+static ssize_t rkbatt_show_cal_attrs(struct device *dev,
+							struct device_attribute *attr, char *buf)
+{
+	queue_work(gBatteryData->wq, &gBatteryData->load_capacity_work);
+	msleep(100);
+	return sprintf(buf, "%d\n", load_cap_value);
+}
+static ssize_t rkbatt_restore_cal_attrs(struct device *dev,
+							struct device_attribute *attr, const char *buf, size_t size)
+{
+	int i;
+
+	if((strncmp(buf, "adc_cal", strlen("adc_cal")) == 0))
+	{
+		adc_sync_read(gBatteryData->client);
+
+		for (i = 0; i < NUM_VOLTAGE_SAMPLE; i++){
+			mdelay(1);
+			rk30_adc_battery_voltage_samples(gBatteryData);
+		}
+
+		DBG("%s..bat->bat_voltage=%d\n",__func__,gBatteryData->bat_voltage);
+		gBatteryData->bat_capacity = rk30_adc_battery_voltage_to_capacity(gBatteryData, gBatteryData->bat_voltage);
+
+		queue_work(gBatteryData->wq, &gBatteryData->put_capacity_work);
+#if defined(CONFIG_BATTERY_BQ27410)
+		if(!bq27410_init)
+#elif defined(CONFIG_BATTERY_BQ27541)
+		if(!bq27541_init)
+#elif defined(CONFIG_BATTERY_BQ27425)
+		if(!bq27425_init)
+#endif
+		power_supply_changed(&gBatteryData ->bat);
+	}
+
+	return size;
+}
+
+static ssize_t rkbatt_show_boot_mode(struct device *dev,struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", saved_command_line);
+}
+
+static ssize_t rkbatt_restore_boot_mode(struct device *dev,struct device_attribute *attr, const char *buf, size_t size)
+{
+	if((strncmp(buf, "reboot", strlen("reboot")) == 0))
+		saved_command_line = original_command_line;
+	printk("charge reboot change mode\n");
+	return size;
+}
+
 static struct device_attribute rkbatt_attrs[] = {
 	__ATTR(state, 0664, rkbatt_show_state_attrs, rkbatt_restore_state_attrs),
 	__ATTR(debug, 0664, rkbatt_show_debug_attrs, rkbatt_restore_debug_attrs),
 	__ATTR(value, 0666, rkbatt_show_value_attrs, rkbatt_restore_value_attrs),
 	__ATTR(flag,  0666, rkbatt_show_flag_attrs,  rkbatt_restore_flag_attrs),
+	__ATTR(cal,  0777, rkbatt_show_cal_attrs,  rkbatt_restore_cal_attrs),
+	__ATTR(boot_mode,  0777, rkbatt_show_boot_mode,  rkbatt_restore_boot_mode),
 };
 
 static int create_sysfs_interfaces(struct device *dev)
@@ -483,40 +821,6 @@ error:
 }
 
 #endif
-
-
-static int rk30_adc_battery_load_capacity(void)
-{
-	char value[4];
-	int* p = (int *)value;
-	long fd = sys_open(BATT_FILENAME,O_RDONLY,0);
-
-	if(fd < 0){
-		DBG("rk30_adc_battery_load_capacity: open file /data/bat_last_capacity.dat failed\n");
-		return -1;
-	}
-
-	sys_read(fd,(char __user *)value,4);
-	sys_close(fd);
-
-	return (*p);
-}
-
-static void rk30_adc_battery_put_capacity(int loadcapacity)
-{
-	char value[4];
-	int* p = (int *)value;
-	long fd = sys_open(BATT_FILENAME,O_CREAT | O_RDWR,0);
-
-	if(fd < 0){
-		DBG("rk30_adc_battery_put_capacity: open file /data/bat_last_capacity.dat failed\n");
-		return;
-	}
-	
-	*p = loadcapacity;
-	sys_write(fd, (const char __user *)value, 4);
-	sys_close(fd);
-}
 
 static void rk_start_charge(struct rk30_adc_battery_data *bat)
 {
@@ -565,6 +869,7 @@ static int  get_usb_status1(struct rk30_adc_battery_data *bat)
 	}else{
 		usb_status = 0;
 	}
+	DBG("%s:usb_status = %d\n", __func__, usb_status);
 
 	return usb_status;
 }
@@ -573,28 +878,49 @@ static int  get_usb_status2(struct rk30_adc_battery_data *bat){
 
 //	struct rk30_adc_battery_platform_data *pdata = bat->pdata;
 	int usb_status = 0; // 0--dischage ,1 ---usb charge, 2 ---ac charge
-	
-	if (1 == dwc_vbus_status()) {
-		if (0 == get_gadget_connect_flag()){ 
-			if (++bat->gBatUsbChargeCnt >= NUM_USBCHARGE_IDENTIFY_TIMES){
-				bat->gBatUsbChargeCnt = NUM_USBCHARGE_IDENTIFY_TIMES + 1;
-				usb_status = 2; // non-standard AC charger
-				if(bat ->pdata ->control_usb_charging)
-					bat ->pdata ->control_usb_charging(1);
+	int vbus_status = 0;
+	if (strstr(saved_command_line,"charger")){
+		if(is_usb_charge)
+			usb_status = 1;
+		else if(is_ac_charge)
+			usb_status = 2;
+		else
+			usb_status = 0;
+	}else{
+		vbus_status = dwc_vbus_status();
+		if (1 == vbus_status){
+			if (0 == get_gadget_connect_flag()){
+				if (++bat->gBatUsbChargeCnt >= NUM_USBCHARGE_IDENTIFY_TIMES){
+					bat->gBatUsbChargeCnt = NUM_USBCHARGE_IDENTIFY_TIMES + 1;
+					usb_status = 1; // non-standard USB charger
+					if(usb_identify_flag != 0){
+						usb_identify_flag = 0;
+						bat->bat_change = 1;
+					}
+				}else{
+					usb_status = 1;	// connect to pc
+					usb_identify_flag = 1;
+				}
+			}else{
+				usb_status = 1;	// connect to pc
+				if(usb_identify_flag != 0){
+					usb_identify_flag = 0;
+					bat->bat_change = 1;
+				}
 			}
 		}else{
-			usb_status = 1;	// connect to pc
-		}
-	}else{
-		bat->gBatUsbChargeCnt = 0;
-		if (2 == dwc_vbus_status()) {
-			usb_status = 2; //standard AC charger
-		}else{
-			usb_status = 0; 
+			bat->gBatUsbChargeCnt = 0;
+			if (2 == vbus_status) {
+				usb_status = 2; //standard AC charger
+			}else{
+				usb_status = 0;
+			}
 		}
 	}
+	DBG("%s:usb_status = %d, dwc_vbus_status()=%d\n", __func__, usb_status, dwc_vbus_status());
 	return usb_status;
 }
+
 
 static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 {
@@ -602,24 +928,56 @@ static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 	int ac_ac_charging = 0, usb_ac_charging = 0;
 	int i=0;
 
+#ifdef CONFIG_BATTERY_BQ24196_OTG_MODE
+	if(bq24196_mode == 1)
+	{
+		bat ->charge_level = 0;
+		bat ->ac_charging = 0;
+		bat ->usb_charging = 0;
+		return 0;
+	}
+#endif
+
 #if defined (CONFIG_BATTERY_RK30_AC_CHARGE)
 	ac_ac_charging = get_ac_status(bat);
 	if(1 == ac_ac_charging)
 		charge_on = 1;
 #endif
 
+	if (!strstr(saved_command_line,"charger"))
+	{
+		if(1 == charge_display_lock_status)
+		{
+			wake_unlock(&charge_display_lock);  //unlock
+			charge_display_lock_status = 0;
+		}
+	}
 #if  defined (CONFIG_BATTERY_RK30_USB_CHARGE)	
 	if (strstr(saved_command_line,"charger")){
-		wake_lock(&charge_display_lock);  //lock
+
+#if defined(CONFIG_BATTERY_BQ27410)
+			if(!bq27410_init)
+#elif defined(CONFIG_BATTERY_BQ27541)
+			if(!bq27541_init)
+#elif defined(CONFIG_BATTERY_BQ27425)
+			if(!bq27425_init)
+#endif
+			{
+				if(!charge_display_lock_status)
+				{
+					wake_lock(&charge_display_lock);  //lock
+					charge_display_lock_status = 1;
+				}
+			}
 		if( bat->pdata->usb_det_pin  != INVALID_GPIO ){
 			if( gpio_get_value(bat->pdata->usb_det_pin)== bat->pdata->usb_det_level){
 				if(( 1 == usb_ac_charging )||( 1 == ac_ac_charging ))
 					bat ->ac_charging = 1;
-#if  !defined (CONFIG_BATTERY_RK30_USB_AND_CHARGE)
+#if !(defined(CONFIG_BATTERY_RK30_USB_AND_CHARGE) || defined(CONFIG_BATTERY_RK30_USB_AND_DC_CHARGE))
 				if(( 1 == bat->usb_charging)||(1 == bat ->ac_charging))
 					charge_on =1;
 #endif
-				DBG("1.ac_status=%d,usb_status=%d bat->bat_change = %d\n",bat ->ac_charging, bat->usb_charging ,bat->bat_change );
+				DBG("1.ac_status=%d,usb_status=%d charge_on = %d\n",bat ->ac_charging, bat->usb_charging ,charge_on);
 //				return charge_on;
 			}else{
 				if(( 0 == usb_ac_charging )&&( 0 == ac_ac_charging ))
@@ -632,7 +990,7 @@ static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 					charge_on=1;
 				else
 					charge_on = 0;
-				DBG("2.ac_status=%d,usb_status=%d bat->bat_change = %d\n",bat ->ac_charging, bat->usb_charging ,bat->bat_change );
+				DBG("2.ac_status=%d,usb_status=%d charge_on = %d\n",bat ->ac_charging, bat->usb_charging ,charge_on);
 				return charge_on;
 			}
 		}else{
@@ -658,13 +1016,13 @@ static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 				charge_on = 0;
 				bat->bat_change = 1;
 			}
-			DBG("3.ac_status=%d,usb_status=%d bat->bat_change = %d\n",bat ->ac_charging, bat->usb_charging ,bat->bat_change );
+			DBG("3.ac_status=%d,usb_status=%d charge_on = %d\n",bat ->ac_charging, bat->usb_charging ,charge_on);
 			return charge_on;
 		}
 	}
 
 	if (charge_on == 0){
-#if  defined (CONFIG_BATTERY_RK30_USB_AND_CHARGE)
+#if  defined (CONFIG_BATTERY_RK30_USB_AND_CHARGE) || defined(CONFIG_BATTERY_RK30_USB_AND_DC_CHARGE)
 		usb_ac_charging = get_usb_status2(bat); //0 --discharge, 1---usb charging,2----AC charging;
 #else
 		usb_ac_charging = get_usb_status1(bat); //0 --discharge, 1---usb charging
@@ -682,7 +1040,13 @@ static int rk_battery_get_status(struct rk30_adc_battery_data *bat)
 
 	if((bat->usb_charging == 1)||(bat ->ac_charging ==1))
 		charge_on =1;
-	
+
+	if((bat->usb_charging == 1)&&(bat ->ac_charging ==1))
+	{
+		bat->ac_charging = 1;
+		bat->usb_charging = 0;
+	}
+
 	if(1 == bat->ac_charging ){
 		bat->charge_source_now = 1; //ac charge
 		if(bat ->pdata ->control_usb_charging)
@@ -1067,6 +1431,32 @@ static void rk_usb_charger(struct rk30_adc_battery_data *bat)
 		        timer_of_charge_sample = NUM_CHARGE_MIN_SAMPLE -5; //10s
 		else if(capacity > bat->bat_capacity + 3 )
 			timer_of_charge_sample = NUM_CHARGE_MIN_SAMPLE - 2; // 13
+#if defined(CONFIG_MALATA_D9001)
+		if(1 == gpio_get_value(bat->pdata->back_light_pin))
+		{
+			if (++(bat->gBatCapacityusbChargeCnt) >= timer_of_charge_sample + 30)
+			{
+				bat->gBatCapacityusbChargeCnt  = 0;
+				if (bat->bat_capacity < 99){
+					bat->bat_capacity++;
+					bat->bat_change  = 1;
+				}
+			}
+			bat->gBatCapacityChargeCnt = 0;
+			bat ->gBatCapacityusbdisChargeCnt = 0;
+		}else{
+			if (++(bat->gBatCapacityusbChargeCnt) >= timer_of_charge_sample)
+			{
+				bat->gBatCapacityusbChargeCnt  = 0;
+				if (bat->bat_capacity < 99){
+					bat->bat_capacity++;
+					bat->bat_change  = 1;
+				}
+			}
+			bat->gBatCapacityChargeCnt = 0;
+			bat ->gBatCapacityusbdisChargeCnt = 0;
+		}
+#else
 		if (++(bat->gBatCapacityusbChargeCnt) >= timer_of_charge_sample){
 			bat->gBatCapacityusbChargeCnt  = 0;
 			if (bat->bat_capacity < 99){
@@ -1076,15 +1466,16 @@ static void rk_usb_charger(struct rk30_adc_battery_data *bat)
 		}
 		bat->gBatCapacityChargeCnt = 0;
 		bat ->gBatCapacityusbdisChargeCnt = 0;//get_suspend_state(void)
+#endif
 	}else if (capacity < bat->bat_capacity){
 	// if((gpio_get_value (bat->pdata->back_light_pin) == 1)&&(capacity < bat->bat_capacity)){
 		if (capacity < bat->bat_capacity){
 			if(capacity + 10 > bat->bat_capacity  )
-				timer_of_discharge_sample = NUM_CHARGE_MIN_SAMPLE -10;  //5s
+				timer_of_discharge_sample = NUM_DISCHARGE_MIN_SAMPLE -10;  //5s
 			else if(capacity  + 7 > bat->bat_capacity )
-				timer_of_discharge_sample = NUM_CHARGE_MIN_SAMPLE -5; //10s
+				timer_of_discharge_sample = NUM_DISCHARGE_MIN_SAMPLE -5; //10s
 			else if(capacity  + 3> bat->bat_capacity )
-				timer_of_discharge_sample = NUM_CHARGE_MIN_SAMPLE - 2; // 13
+				timer_of_discharge_sample = NUM_DISCHARGE_MIN_SAMPLE - 2; // 13
 			
 			if (++(bat->gBatCapacityusbdisChargeCnt) >= timer_of_discharge_sample){
 				bat->gBatCapacityusbdisChargeCnt = 0;
@@ -1163,6 +1554,30 @@ static void rk_ac_charger(struct rk30_adc_battery_data *bat)
 		        timer_of_charge_sample = NUM_CHARGE_MIN_SAMPLE -5; //10s
 		else if(capacity > bat->bat_capacity + 3 )
 			timer_of_charge_sample = NUM_CHARGE_MIN_SAMPLE - 2; // 13
+#if defined(CONFIG_MALATA_D9001)
+		if(1 == gpio_get_value(bat->pdata->back_light_pin))
+		{
+			if (++(bat->gBatCapacityacChargeCnt) >= timer_of_charge_sample + 30)
+			{
+				bat->gBatCapacityacChargeCnt  = 0;
+				if (bat->bat_capacity < 99){
+					bat->bat_capacity++;
+					bat->bat_change  = 1;
+				}
+			}
+			bat->gBatCapacityChargeCnt = 0;
+		}else{
+			if (++(bat->gBatCapacityacChargeCnt) >= timer_of_charge_sample)
+			{
+				bat->gBatCapacityacChargeCnt  = 0;
+				if (bat->bat_capacity < 99){
+					bat->bat_capacity++;
+					bat->bat_change  = 1;
+				}
+			}
+			bat->gBatCapacityChargeCnt = 0;
+		}
+#else
 		if (++(bat->gBatCapacityacChargeCnt) >= timer_of_charge_sample){
 			bat->gBatCapacityacChargeCnt  = 0;
 			if (bat->bat_capacity < 99){
@@ -1171,6 +1586,7 @@ static void rk_ac_charger(struct rk30_adc_battery_data *bat)
 			}
 		}
 		bat->gBatCapacityChargeCnt = 0;
+#endif
 	}
 	else{  
 		bat->gBatCapacityacChargeCnt = 0;
@@ -1242,11 +1658,11 @@ static void rk_battery_charger(struct rk30_adc_battery_data *bat)
 
 	if (capacity < bat->bat_capacity){
 		if(capacity + 3 > bat->bat_capacity  )
-		        timer_of_discharge_sample = NUM_CHARGE_MIN_SAMPLE -5;  //5s
+		        timer_of_discharge_sample = NUM_DISCHARGE_MIN_SAMPLE -5;  //5s
 		else if(capacity  + 7 > bat->bat_capacity )
-		        timer_of_discharge_sample = NUM_CHARGE_MIN_SAMPLE -10; //10s
+		        timer_of_discharge_sample = NUM_DISCHARGE_MIN_SAMPLE -10; //10s
 		        else if(capacity  + 10> bat->bat_capacity )
-		                timer_of_discharge_sample = NUM_CHARGE_MIN_SAMPLE - 15; // 13
+		                timer_of_discharge_sample = NUM_DISCHARGE_MIN_SAMPLE - 15; // 13
 
 		if (++(bat->gBatCapacityDisChargeCnt) >= timer_of_discharge_sample){
 			bat->gBatCapacityDisChargeCnt = 0;
@@ -1299,6 +1715,8 @@ static void rk30_adc_battery_poweron_capacity_check(struct rk30_adc_battery_data
 {
 	int new_capacity, old_capacity;
 	int cnt = 50 ;
+
+	adc_mtd_index = adc_find_partition_by_name(ADC_CABLIC_FILE);
 
 	new_capacity = bat ->bat_capacity;
 //#if  defined (CONFIG_BATTERY_RK30_USB_CHARGE)
@@ -1354,6 +1772,8 @@ static void rk30_adc_battery_poweron_capacity_check(struct rk30_adc_battery_data
 	
 	DBG("%s...bat ->bat_capacity=%d,new_capacity=%d,old_capacity=%d\n",__func__,bat ->bat_capacity,new_capacity,old_capacity);
 	bat ->bat_change = 1;
+	rk30_adc_battery_put_capacity(bat->bat_capacity);
+	put_capacity_num = 1;
 }
 #define to_battery_usb_device_info(x) container_of((x), \
 		struct rk30_adc_battery_data, usb);
@@ -1368,9 +1788,17 @@ static int rk30_adc_battery_get_usb_property(struct power_supply *psy,
 		case POWER_SUPPLY_PROP_ONLINE:
 			if (psy->type == POWER_SUPPLY_TYPE_USB){
 				val->intval = bat ->usb_charging;
-//			if( (1 == bat->charge_full_flag) && (!strstr(saved_command_line,"charger")))
-//					val->intval = 0;
-			DBG("%s......bat ->usb_charging=%d,bat->charge_full_flag=%d,strstr=%d\n",__func__,bat ->usb_charging,bat->charge_full_flag,(!strstr(saved_command_line,"charger")));
+			if((1 == charging_flag) && (strstr(saved_command_line,"charger")))
+				val->intval = 0;
+			if((1 == usb_identify_flag) && (!strstr(saved_command_line,"charger")))
+				val->intval = 0;
+#if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
+			if((1 == check_charge_ok) && (!strstr(saved_command_line,"charger")))
+				if((1 == charge_en_flags) && (1 == update_temp_ok))
+					val->intval = 0;
+#endif
+
+			DBG("%s......bat ->usb_charging=%d,charging_flag=%d,strstr=%d\n",__func__,bat ->usb_charging,charging_flag,(!strstr(saved_command_line,"charger")));
 			}
 			break;
 
@@ -1399,6 +1827,7 @@ static struct power_supply rk30_usb_supply =
 static irqreturn_t rk30_adc_battery_dc_wakeup(int irq, void *dev_id)
 {   
 	disable_irq_nosync(irq);
+	wake_lock_timeout(&dc_wakelock, 10 * HZ);
 	queue_work(gBatteryData->wq, &gBatteryData->dcwakeup_work);
 	return IRQ_HANDLED;
 }
@@ -1418,9 +1847,15 @@ static int rk30_adc_battery_get_ac_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ONLINE:
 		if (psy->type == POWER_SUPPLY_TYPE_MAINS){
 			val->intval = bat ->ac_charging;
-//			if( (1 == bat->charge_full_flag) && (!strstr(saved_command_line,"charger")))
-//				val->intval = 0;
-				DBG("%s......bat ->ac_charging=%d,bat->charge_full_flag=%d,strstr=%d\n",__func__,bat ->ac_charging,bat->charge_full_flag,(!strstr(saved_command_line,"charger")));
+			if( (1 == charging_flag) && (strstr(saved_command_line,"charger")))
+				val->intval = 0;
+#if defined(CONFIG_CHARGER_LIMITED_BY_TEMP)
+		if((1 == check_charge_ok) && (!strstr(saved_command_line,"charger")))
+			if((1 == charge_en_flags) && (1 == update_temp_ok))
+				val->intval = 0;
+#endif
+
+			DBG("%s......bat ->ac_charging=%d,charging_flag=%d,strstr=%d\n",__func__,bat ->ac_charging,charging_flag,(!strstr(saved_command_line,"charger")));
 		}
 		break;
 		
@@ -1630,7 +2065,7 @@ static int rk30_adc_battery_resume(struct platform_device *dev)
 
 	data ->resume_time = get_seconds();
 	data ->resume = true;
-	queue_delayed_work(data->wq, &data ->delay_work, msecs_to_jiffies(100));
+	queue_delayed_work(data->wq, &data ->delay_work, msecs_to_jiffies(1000));
 	if( data ->pdata->batt_low_pin != INVALID_GPIO){
 		irq = gpio_to_irq(data ->pdata ->batt_low_pin);
 	    	disable_irq_wake(irq);
@@ -1676,15 +2111,17 @@ struct rk30_adc_battery_data  *bat = container_of((work), \
 	rk30_adc_battery_voltage_samples(bat);
 	rk30_adc_battery_capacity_samples(bat);
 
-	if( 1 == bat->charge_level){  // charge
+	if( 1 == bat->usb_charging){  // charge
 		if(0 == bat->status_lock ){			
-			wake_lock(&batt_wake_lock);  //lock
+			if (!strstr(saved_command_line,"charger"))
+				wake_lock(&batt_wake_lock);  //lock
 			bat ->status_lock = 1; 
 		}
 	}
 	else{
-		if(1 == bat ->status_lock ){			
-			wake_unlock(&batt_wake_lock);  //unlock
+		if(1 == bat ->status_lock ){
+			if (!strstr(saved_command_line,"charger"))
+				wake_unlock(&batt_wake_lock);  //unlock
 			bat ->status_lock = 0; 
 		}
 	}
@@ -1696,7 +2133,20 @@ struct rk30_adc_battery_data  *bat = container_of((work), \
 //			bat ->ac_charging = 0;
 //			bat ->usb_charging = 0;
 //		}
-		rk30_adc_battery_put_capacity(bat ->bat_capacity);
+	if((bat->bat_capacity > 10) && (bat->bat_capacity < 95))
+	{
+		if(put_capacity_num >= 5)
+		{
+			rk30_adc_battery_put_capacity(bat->bat_capacity);
+			put_capacity_num = 0;
+		}else{
+			put_capacity_num++;
+		}
+	}else{
+		rk30_adc_battery_put_capacity(bat->bat_capacity);
+		put_capacity_num = 0;
+	}
+
 #if defined(CONFIG_BATTERY_BQ27410)
 	if(!bq27410_init)
 #elif defined(CONFIG_BATTERY_BQ27541)
@@ -1864,21 +2314,7 @@ static void rk30_adc_battery_check(struct rk30_adc_battery_data *bat)
 	//			bat->bat_capacity = 100;
 	//		}
 #if  defined (CONFIG_BATTERY_RK30_USB_CHARGE)
-#if  !defined (CONFIG_BATTERY_RK30_USB_AND_CHARGE)
-			if(1 == get_ac_status(bat)){
-				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
-				if(bat ->pdata ->control_usb_charging)
-					bat ->pdata ->control_usb_charging(1);
-				bat ->ac_charging = 1;
-				bat->usb_charging = 0;
-			}else if(1 == get_usb_status1(bat)){
-				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
-				if(bat ->pdata ->control_usb_charging)
-					bat ->pdata ->control_usb_charging(0);
-				bat ->usb_charging = 1;
-			}
-
-#else
+#if  defined (CONFIG_BATTERY_RK30_USB_AND_CHARGE)
 			if( 0 != status)
 				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
 			if(status == 0){
@@ -1893,6 +2329,40 @@ static void rk30_adc_battery_check(struct rk30_adc_battery_data *bat)
 				if(bat ->pdata ->control_usb_charging)
 					bat ->pdata ->control_usb_charging(1);
 			}
+#elif defined(CONFIG_BATTERY_RK30_USB_AND_DC_CHARGE)
+			if(1 == get_ac_status(bat)){
+				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
+				if(bat ->pdata ->control_usb_charging)
+					bat ->pdata ->control_usb_charging(1);
+				bat->ac_charging = 1;
+				bat->usb_charging = 0;
+			}else if(0 != status){
+				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
+				if(status == 1){
+					bat->ac_charging = 0;
+					bat->usb_charging = 1;
+					if(bat ->pdata ->control_usb_charging)
+						bat ->pdata ->control_usb_charging(0);
+				}else if(status == 2){
+					bat->usb_charging = 0;
+					bat->ac_charging = 1;
+					if(bat ->pdata ->control_usb_charging)
+						bat ->pdata ->control_usb_charging(1);
+				}
+			}
+#else
+			if(1 == get_ac_status(bat)){
+				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
+				if(bat ->pdata ->control_usb_charging)
+					bat ->pdata ->control_usb_charging(1);
+				bat ->ac_charging = 1;
+				bat->usb_charging = 0;
+			}else if(1 == get_usb_status1(bat)){
+				bat->bat_status = POWER_SUPPLY_STATUS_CHARGING;
+				if(bat ->pdata ->control_usb_charging)
+					bat ->pdata ->control_usb_charging(0);
+				bat ->usb_charging = 1;
+			}
 #endif
 #else
 			if(1 == get_ac_status(bat)){
@@ -1900,6 +2370,8 @@ static void rk30_adc_battery_check(struct rk30_adc_battery_data *bat)
 				bat ->ac_charging = 1;
 			}
 #endif
+			DBG("%s..status = %d, bat->usb_charging=%d, bat->ac_charging = %d\n",__func__, status, bat->usb_charging, bat->ac_charging);
+
 			is_usb_charge = (1 == bat->usb_charging);
 			is_ac_charge = (1 == bat ->ac_charging);
 			power_supply_changed(&bat ->ac);
@@ -1941,18 +2413,6 @@ static void rk30_adc_battery_check(struct rk30_adc_battery_data *bat)
 		kernel_power_off();
 	}
 #endif
-}
-bool is_accharging(void)
-{
-	return is_ac_charge;
-}
-bool is_usbcharging(void)
-{
-	return is_usb_charge;
-}
-bool low_usb_charging(void)
-{
-	return low_usb_charge;
 }
 
 static void rk30_adc_battery_callback(struct adc_client *client, void *param, int result)
@@ -2012,6 +2472,22 @@ void rk30_bat_unregister(void)
 }
 EXPORT_SYMBOL(rk30_bat_unregister);
 
+void rk30_power_supply_changed(void)
+{
+	power_supply_changed(&gBatteryData ->ac);
+	power_supply_changed(&gBatteryData ->usb);
+}
+EXPORT_SYMBOL(rk30_power_supply_changed);
+
+void rk30_charge_det_change(void)
+{
+	rk_battery_get_status(gBatteryData);
+
+	power_supply_changed(&gBatteryData ->ac);
+	power_supply_changed(&gBatteryData ->usb);
+}
+EXPORT_SYMBOL(rk30_charge_det_change);
+
 static int rk30_adc_battery_probe(struct platform_device *pdev)
 {
 	int    ret;
@@ -2056,7 +2532,7 @@ static int rk30_adc_battery_probe(struct platform_device *pdev)
 	data->bat_status = POWER_SUPPLY_STATUS_NOT_CHARGING;
  	wake_lock_init(&batt_wake_lock, WAKE_LOCK_SUSPEND, "batt_lock");	
  	wake_lock_init(&charge_display_lock, WAKE_LOCK_SUSPEND, "charge_display_lock");	//charge_display_lock
-	
+	wake_lock_init(&dc_wakelock, WAKE_LOCK_SUSPEND, "dc_detect");
 	ret = rk30_adc_battery_io_init(pdata);
 	 if (ret) {
 	 	ret = -EINVAL;
@@ -2175,6 +2651,10 @@ static int rk30_adc_battery_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&data->check_work, rk_adc_battery_check_work);
 	queue_delayed_work(data ->wq, &data ->check_work, msecs_to_jiffies(TIMER_MS_COUNTS));
 
+	INIT_WORK(&data->load_capacity_work, rk30_adc_battery_load_capacity_delaywork);
+
+	INIT_WORK(&data->put_capacity_work, rk30_adc_battery_put_capacity_delaywork);
+
 	printk(KERN_INFO "rk30_adc_battery: driver initialized\n");
 	
 	return 0;
@@ -2221,11 +2701,17 @@ static int rk30_adc_battery_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static int rk30_adc_battery_shutdown(struct platform_device *pdev)
+{
+	rk30_adc_battery_put_capacity(gBatteryData->bat_capacity);
+}
+
 static struct platform_driver rk30_adc_battery_driver = {
 	.probe		= rk30_adc_battery_probe,
 	.remove		= rk30_adc_battery_remove,
-	.suspend		= rk30_adc_battery_suspend,
+	.suspend	= rk30_adc_battery_suspend,
 	.resume		= rk30_adc_battery_resume,
+	.shutdown	= rk30_adc_battery_shutdown,
 	.driver = {
 		.name = "rk30-battery",
 		.owner	= THIS_MODULE,
